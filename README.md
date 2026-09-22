@@ -100,7 +100,6 @@ platformio.ini            PlatformIO environment configuration
 
 ## TODO Before Flight
 
-- [ ] Replace the blocking `pulseIn()` receiver reads with interrupt-based capture, or confirm that the control loop stays fast enough.
 - [ ] Normalize and limit PID outputs before sending them to the mixer. The mixer and `Motor::setSpeed()` must use the same `0.0-1.0` scale.
 - [ ] Add arming/disarming and a receiver-loss failsafe that stops all motors.
 - [ ] Verify IMU axis directions, motor order, propeller direction, and ESC minimum pulse with propellers removed.

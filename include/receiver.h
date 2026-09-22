@@ -9,13 +9,14 @@ public:
     void init();
     void readData();
     void printData() const;
+    void handlePinChangeInterrupt();
     float getThrottle() const { return throttle; }
     float getRoll() const { return roll; }
     float getPitch() const { return pitch; }
     float getYaw() const { return yaw; }
 
 private:
-    float readChannel(uint8_t pin, float minimum, float maximum) const;
+    float readChannel(uint16_t pulseWidth, float minimum, float maximum) const;
     uint8_t throttlePin;
     uint8_t rollPin;
     uint8_t pitchPin;
@@ -24,6 +25,10 @@ private:
     float roll;
     float pitch;
     float yaw;
+    volatile uint16_t pulseWidths[4];
+    volatile unsigned long pulseStarts[4];
+    volatile unsigned long lastPulseTimes[4];
+    volatile uint8_t lastPortState;
 };
 
 #endif // RECEIVER_H

@@ -1,4 +1,9 @@
 #include "receiver.h"
+#include <avr/interrupt.h>
+
+namespace {
+Receiver* activeReceiver = nullptr;
+}
 
 /**
  * @brief Initialize the receiver
@@ -17,7 +22,11 @@ Receiver::Receiver(uint8_t throttlePin, uint8_t rollPin, uint8_t pitchPin, uint8
       throttle(0.0f),
       roll(0.0f),
       pitch(0.0f),
-      yaw(0.0f) {}
+            yaw(0.0f),
+            pulseWidths{0, 0, 0, 0},
+            pulseStarts{0, 0, 0, 0},
+            lastPulseTimes{0, 0, 0, 0},
+            lastPortState(0) {}
 
 /**
  * @brief Initialize the receiver
@@ -29,6 +38,11 @@ void Receiver::init() {
     pinMode(rollPin, INPUT);
     pinMode(pitchPin, INPUT);
     pinMode(yawPin, INPUT);
+
+    activeReceiver = this;
+    lastPortState = PINB & 0x0F;
+    PCICR |= _BV(PCIE0);
+    PCMSK0 |= _BV(PCINT0) | _BV(PCINT1) | _BV(PCINT2) | _BV(PCINT3);
 }
 
 /**
@@ -37,28 +51,63 @@ void Receiver::init() {
  * @return None
  */
 void Receiver::readData() {
-    float newThrottle = readChannel(throttlePin, 0.0f, 1.0f);
-    float newRoll = readChannel(rollPin, -1.0f, 1.0f);
-    float newPitch = readChannel(pitchPin, -1.0f, 1.0f);
-    float newYaw = readChannel(yawPin, -1.0f, 1.0f);
+    uint16_t pulseSnapshot[4];
+    unsigned long lastPulseSnapshot[4];
 
-    if (newThrottle >= 0.0f) throttle = newThrottle;
-    if (newRoll >= -1.0f) roll = newRoll;
-    if (newPitch >= -1.0f) pitch = newPitch;
-    if (newYaw >= -1.0f) yaw = newYaw;
+    noInterrupts();
+    for (uint8_t channel = 0; channel < 4; ++channel) {
+        pulseSnapshot[channel] = pulseWidths[channel];
+        lastPulseSnapshot[channel] = lastPulseTimes[channel];
+    }
+    interrupts();
+
+    const unsigned long now = micros();
+    const bool throttleValid = now - lastPulseSnapshot[2] <= 100000UL &&
+                               pulseSnapshot[2] >= 900U && pulseSnapshot[2] <= 2100U;
+    const bool rollValid = now - lastPulseSnapshot[0] <= 100000UL &&
+                           pulseSnapshot[0] >= 900U && pulseSnapshot[0] <= 2100U;
+    const bool pitchValid = now - lastPulseSnapshot[1] <= 100000UL &&
+                            pulseSnapshot[1] >= 900U && pulseSnapshot[1] <= 2100U;
+    const bool yawValid = now - lastPulseSnapshot[3] <= 100000UL &&
+                          pulseSnapshot[3] >= 900U && pulseSnapshot[3] <= 2100U;
+
+    throttle = throttleValid ? readChannel(pulseSnapshot[2], 0.0f, 1.0f) : 0.0f;
+    roll = rollValid ? readChannel(pulseSnapshot[0], -1.0f, 1.0f) : 0.0f;
+    pitch = pitchValid ? readChannel(pulseSnapshot[1], -1.0f, 1.0f) : 0.0f;
+    yaw = yawValid ? readChannel(pulseSnapshot[3], -1.0f, 1.0f) : 0.0f;
+}
+
+void Receiver::handlePinChangeInterrupt() {
+    const uint8_t portState = PINB & 0x0F;
+    const uint8_t changedBits = portState ^ lastPortState;
+    const unsigned long currentTime = micros();
+
+    for (uint8_t channel = 0; channel < 4; ++channel) {
+        const uint8_t channelMask = _BV(channel);
+        if ((changedBits & channelMask) == 0) {
+            continue;
+        }
+
+        if (portState & channelMask) {
+            pulseStarts[channel] = currentTime;
+        } else {
+            pulseWidths[channel] = static_cast<uint16_t>(currentTime - pulseStarts[channel]);
+            lastPulseTimes[channel] = currentTime;
+        }
+    }
+
+    lastPortState = portState;
 }
 
 /**
  * @brief Read a single channel from the receiver
  * @details Reads the pulse width of a single channel and converts it to a normalized value
- * @param[in] pin The pin to read from
+ * @param[in] pulseWidth The captured receiver pulse width in microseconds
  * @param[in] minimum The minimum value for the channel
  * @param[in] maximum The maximum value for the channel
  * @return The normalized value of the channel, or minimum - 1.0f if the pulse width is out of range
  */
-float Receiver::readChannel(uint8_t pin, float minimum, float maximum) const {
-    unsigned long pulseWidth = pulseIn(pin, HIGH, 25000UL);
-
+float Receiver::readChannel(uint16_t pulseWidth, float minimum, float maximum) const {
     if (pulseWidth < 900UL || pulseWidth > 2100UL) {
         return minimum - 1.0f;
     }
@@ -66,6 +115,12 @@ float Receiver::readChannel(uint8_t pin, float minimum, float maximum) const {
     float value = (pulseWidth - 1000.0f) / 1000.0f;
     value = constrain(value, 0.0f, 1.0f);
     return minimum + value * (maximum - minimum);
+}
+
+ISR(PCINT0_vect) {
+    if (activeReceiver != nullptr) {
+        activeReceiver->handlePinChangeInterrupt();
+    }
 }
 
 /**

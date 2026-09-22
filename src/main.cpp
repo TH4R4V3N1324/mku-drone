@@ -15,7 +15,12 @@ Motor motor3(6); // PWM pin for motor 3
 Motor motor4(7); // PWM pin for motor 4
 MotorMixer mixer(motor1, motor2, motor3, motor4);
 IMU imu;
-Receiver receiver(10, 8, 9, 11); // Pins for throttle, roll, pitch, and yaw channels
+
+constexpr uint8_t throttlePin = 10;
+constexpr uint8_t rollPin = 8;
+constexpr uint8_t pitchPin = 9;
+constexpr uint8_t yawPin = 11;
+Receiver receiver(throttlePin, rollPin, pitchPin, yawPin);
 
 PID rollPID(1.3, 0.04, 18.0); // PID controller for roll
 PID pitchPID(1.3, 0.04, 18.0); // PID controller for pitch
