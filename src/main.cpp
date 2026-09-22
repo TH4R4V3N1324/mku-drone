@@ -16,9 +16,9 @@ Motor motor4(7); // PWM pin for motor 4
 MotorMixer mixer(motor1, motor2, motor3, motor4);
 IMU imu;
 
-constexpr uint8_t throttlePin = 10;
+constexpr uint8_t throttlePin = 9;
 constexpr uint8_t rollPin = 8;
-constexpr uint8_t pitchPin = 9;
+constexpr uint8_t pitchPin = 10;
 constexpr uint8_t yawPin = 11;
 Receiver receiver(throttlePin, rollPin, pitchPin, yawPin);
 
@@ -28,7 +28,7 @@ PID yawPID(4.0, 0.02, 0.0); // PID controller for yaw
 unsigned long previousLoopTime;
 
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   Wire.begin();
   imu.init();
   imu.calibrate();

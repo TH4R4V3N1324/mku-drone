@@ -62,19 +62,28 @@ void Receiver::readData() {
     interrupts();
 
     const unsigned long now = micros();
-    const bool throttleValid = now - lastPulseSnapshot[2] <= 100000UL &&
-                               pulseSnapshot[2] >= 900U && pulseSnapshot[2] <= 2100U;
-    const bool rollValid = now - lastPulseSnapshot[0] <= 100000UL &&
-                           pulseSnapshot[0] >= 900U && pulseSnapshot[0] <= 2100U;
-    const bool pitchValid = now - lastPulseSnapshot[1] <= 100000UL &&
-                            pulseSnapshot[1] >= 900U && pulseSnapshot[1] <= 2100U;
-    const bool yawValid = now - lastPulseSnapshot[3] <= 100000UL &&
-                          pulseSnapshot[3] >= 900U && pulseSnapshot[3] <= 2100U;
+    const uint8_t throttleChannel = throttlePin - 8;
+    const uint8_t rollChannel = rollPin - 8;
+    const uint8_t pitchChannel = pitchPin - 8;
+    const uint8_t yawChannel = yawPin - 8;
 
-    throttle = throttleValid ? readChannel(pulseSnapshot[2], 0.0f, 1.0f) : 0.0f;
-    roll = rollValid ? readChannel(pulseSnapshot[0], -1.0f, 1.0f) : 0.0f;
-    pitch = pitchValid ? readChannel(pulseSnapshot[1], -1.0f, 1.0f) : 0.0f;
-    yaw = yawValid ? readChannel(pulseSnapshot[3], -1.0f, 1.0f) : 0.0f;
+    const bool throttleValid = now - lastPulseSnapshot[throttleChannel] <= 100000UL &&
+                               pulseSnapshot[throttleChannel] >= 900U &&
+                               pulseSnapshot[throttleChannel] <= 2100U;
+    const bool rollValid = now - lastPulseSnapshot[rollChannel] <= 100000UL &&
+                           pulseSnapshot[rollChannel] >= 900U &&
+                           pulseSnapshot[rollChannel] <= 2100U;
+    const bool pitchValid = now - lastPulseSnapshot[pitchChannel] <= 100000UL &&
+                            pulseSnapshot[pitchChannel] >= 900U &&
+                            pulseSnapshot[pitchChannel] <= 2100U;
+    const bool yawValid = now - lastPulseSnapshot[yawChannel] <= 100000UL &&
+                          pulseSnapshot[yawChannel] >= 900U &&
+                          pulseSnapshot[yawChannel] <= 2100U;
+
+    throttle = throttleValid ? readChannel(pulseSnapshot[throttleChannel], 0.0f, 1.0f) : 0.0f;
+    roll = rollValid ? readChannel(pulseSnapshot[rollChannel], -1.0f, 1.0f) : 0.0f;
+    pitch = pitchValid ? readChannel(pulseSnapshot[pitchChannel], -1.0f, 1.0f) : 0.0f;
+    yaw = yawValid ? readChannel(pulseSnapshot[yawChannel], -1.0f, 1.0f) : 0.0f;
 }
 
 void Receiver::handlePinChangeInterrupt() {
