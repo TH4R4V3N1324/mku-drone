@@ -1,5 +1,14 @@
 #include "motorMixer.h"
 
+/**
+ * @brief Mix the control signals to determine the motor speeds
+ * @details Mixes the throttle, roll, pitch, and yaw signals to determine the speed of each motor
+ * @param[in] throttle The throttle input (0.0 to 1.0)
+ * @param[in] roll The roll input (0.0 to 1.0)
+ * @param[in] pitch The pitch input (0.0 to 1.0)
+ * @param[in] yaw The yaw input (0.0 to 1.0)
+ * @return None
+ */
 void MotorMixer::mixMotors(float throttle, float roll, float pitch, float yaw) {
     // Simple mixing algorithm for a quadcopter in X configuration
     float motor1Speed = throttle + roll + pitch + yaw; // Front Left

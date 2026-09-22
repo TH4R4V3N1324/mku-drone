@@ -41,6 +41,11 @@ void loop() {
   test();
 }
 
+/**
+ * @brief Main control loop for the drone
+ * @details Reads data from the IMU and receiver, computes PID outputs, and mixes motor speeds
+ * @return None
+ */
 void run() {
   unsigned long now = micros();
   float dt = (now - previousLoopTime) / 1000000.0f;
@@ -67,6 +72,11 @@ void run() {
   mixer.mixMotors(throttle, rollOutput, pitchOutput, yawOutput);
 }
 
+/**
+ * @brief Test function to read receiver data and set motor speeds
+ * @details Reads data from the receiver and sets all motors to the throttle value
+ * @return None
+ */
 void test() {
   receiver.readData();
   receiver.printData();
