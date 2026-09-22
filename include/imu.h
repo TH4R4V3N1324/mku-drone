@@ -86,6 +86,7 @@ private:
     void calculateOrientation();
     IMUData data;
     unsigned long lastReadTime;
+    int i2cAddress;
     const float ACCEL_SCALE = 16384.0; // Scale factor for accelerometer
     const float GYRO_SCALE = 131.0; // Scale factor for gyroscope
     const float TEMP_SCALE = 340.0; // Scale factor for temperature

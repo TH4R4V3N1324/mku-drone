@@ -7,7 +7,8 @@
  * @return None
  */
 void IMU::init(int address) {
-    Wire.beginTransmission(address);
+    this->i2cAddress = address;
+    Wire.beginTransmission(i2cAddress);
     Wire.write(0x6B); // Power management register
     Wire.write(0x00); // Set to zero (wakes up the MPU-6050)
     Wire.endTransmission(true);
@@ -44,10 +45,10 @@ void IMU::calibrate() {
  */
 void IMU::readData() {
     // Implementation for reading IMU data
-    Wire.beginTransmission(IMU_ADDRESS);
+    Wire.beginTransmission(i2cAddress);
     Wire.write(0x3B); // Starting register for accelerometer data
     Wire.endTransmission(false);
-    Wire.requestFrom(IMU_ADDRESS, 14, true); // Request 14 bytes of data
+    Wire.requestFrom(i2cAddress, 14, true); // Request 14 bytes of data
 
     int16_t ax = Wire.read() << 8 | Wire.read();
     int16_t ay = Wire.read() << 8 | Wire.read();
