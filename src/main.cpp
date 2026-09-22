@@ -82,8 +82,9 @@ void run() {
 }
 
 /**
- * @brief Test function to read receiver data and set motor speeds
- * @details Reads data from the receiver and sets all motors to the throttle value
+ * @brief Test the receiver-to-mixer path without running the PID controllers
+ * @details Uses the transmitter throttle and small normalized attitude commands
+ * so each stick can be checked independently with the propellers removed.
  * @return None
  */
 void test() {
@@ -91,8 +92,17 @@ void test() {
   receiver.printData();
 
   float throttle = receiver.getThrottle();
-  motor1.setSpeed(throttle);
-  motor2.setSpeed(throttle);
-  motor3.setSpeed(throttle);
-  motor4.setSpeed(throttle);
+  float roll = receiver.getRoll() * 0.20f;
+  float pitch = receiver.getPitch() * 0.20f;
+  float yaw = receiver.getYaw() * 0.20f;
+
+  if (throttle <= 0.05f) {
+    motor1.stop();
+    motor2.stop();
+    motor3.stop();
+    motor4.stop();
+    return;
+  }
+
+  mixer.mixMotors(throttle, roll, pitch, yaw);
 }
