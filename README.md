@@ -98,6 +98,17 @@ platformio.ini            PlatformIO environment configuration
 - Before enabling `run()`, verify the motor numbering, propeller direction, receiver channel order, sensor orientation, ESC arming behavior, and controller gains.
 - The mixer currently constrains intermediate values to `0-100`, while `Motor::setSpeed()` expects `0-1`. This output scaling should be corrected and bench-tested before using the stabilized path.
 
+## TODO Before Flight
+
+- [ ] Fix IMU calibration: average the raw gyro readings while the aircraft is still, then subtract those offsets from every later gyro reading. The current calibration averages angles but does not apply the offsets.
+- [ ] Replace the blocking `pulseIn()` receiver reads with interrupt-based capture, or confirm that the control loop stays fast enough.
+- [ ] Normalize and limit PID outputs before sending them to the mixer. The mixer and `Motor::setSpeed()` must use the same `0.0-1.0` scale.
+- [ ] Add arming/disarming and a receiver-loss failsafe that stops all motors.
+- [ ] Verify IMU axis directions, motor order, propeller direction, and ESC minimum pulse with propellers removed.
+- [ ] Test receiver unplugging, IMU failure, disarming, and power cycling with propellers removed.
+
+EEPROM is not required for the fixed pin setup. The reference sketches use it for receiver calibration, axis mapping, and gyro configuration, but this project can keep those values in code. Add receiver endpoint calibration later if the channels are not close to `1000/1500/2000` microseconds.
+
 ## License
 
 No license has been specified for this project yet.
