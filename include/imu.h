@@ -27,7 +27,7 @@ public:
           pitchOffset(0.0f),
           rollOffset(0.0f),
           yawOffset(0.0f) {}
-    void init();
+    void init(int address = IMU_ADDRESS);
     void calibrate();
     void readData();
     void printData();

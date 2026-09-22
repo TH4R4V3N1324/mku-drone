@@ -6,8 +6,8 @@
  * @param[in] address The I2C address of the IMU
  * @return None
  */
-void IMU::init() {
-    Wire.beginTransmission(IMU_ADDRESS);
+void IMU::init(int address) {
+    Wire.beginTransmission(address);
     Wire.write(0x6B); // Power management register
     Wire.write(0x00); // Set to zero (wakes up the MPU-6050)
     Wire.endTransmission(true);
