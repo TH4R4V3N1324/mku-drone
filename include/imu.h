@@ -32,16 +32,56 @@ public:
     void readData();
     void printData();
     void printOrientation();
-    float getAccelX() const {return data.accelX;}
-    float getAccelY() const {return data.accelY;}
-    float getAccelZ() const {return data.accelZ;}
-    float getGyroX() const {return data.gyroX;}
-    float getGyroY() const {return data.gyroY;}
-    float getGyroZ() const {return data.gyroZ;}
-    float getTemperature() const {return data.temperature;}
-    float getPitch() const {return pitch;}
-    float getRoll() const {return roll;}
-    float getYaw() const {return yaw;}
+    /**
+    * @brief Get the X-axis acceleration.
+    * @return Acceleration in m/s^2.
+     */
+    float getAccelX() const { return data.accelX; }
+    /**
+    * @brief Get the Y-axis acceleration.
+    * @return Acceleration in m/s^2.
+     */
+    float getAccelY() const { return data.accelY; }
+    /**
+    * @brief Get the Z-axis acceleration.
+    * @return Acceleration in m/s^2.
+     */
+    float getAccelZ() const { return data.accelZ; }
+    /**
+    * @brief Get the X-axis angular velocity.
+    * @return Angular velocity in degrees/s.
+     */
+    float getGyroX() const { return data.gyroX; }
+    /**
+    * @brief Get the Y-axis angular velocity.
+    * @return Angular velocity in degrees/s.
+     */
+    float getGyroY() const { return data.gyroY; }
+    /**
+    * @brief Get the Z-axis angular velocity.
+    * @return Angular velocity in degrees/s.
+     */
+    float getGyroZ() const { return data.gyroZ; }
+    /**
+    * @brief Get the sensor temperature.
+    * @return Temperature in degrees Celsius.
+     */
+    float getTemperature() const { return data.temperature; }
+    /**
+    * @brief Get the calculated pitch angle.
+    * @return Pitch in degrees.
+     */
+    float getPitch() const { return pitch; }
+    /**
+    * @brief Get the calculated roll angle.
+    * @return Roll in degrees.
+     */
+    float getRoll() const { return roll; }
+    /**
+    * @brief Get the integrated yaw angle.
+    * @return Yaw in degrees. This value can drift over time.
+     */
+    float getYaw() const { return yaw; }
 private:
     void calculateOrientation();
     IMUData data;
