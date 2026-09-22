@@ -28,6 +28,11 @@ void setup() {
   imu.init();
   imu.calibrate();
   receiver.init();
+  motor1.stop();
+  motor2.stop();
+  motor3.stop();
+  motor4.stop();
+  delay(2000);
   previousLoopTime = micros();
 }
 

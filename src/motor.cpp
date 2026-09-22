@@ -6,7 +6,7 @@ Motor::Motor(int pwmPin) : pwmPin(pwmPin) {
 
 void Motor::setSpeed(float speed) {
     speed = constrain(speed, 0, 1);
-    int speedMapped = map(speed, 0, 1, 1000, 2000);
+    int speedMapped = static_cast<int>(1000.0f + speed * 1000.0f);
     motor.writeMicroseconds(speedMapped);
 }
 
