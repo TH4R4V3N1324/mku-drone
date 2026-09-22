@@ -7,6 +7,7 @@
 class Motor {
 public:
     Motor(int pwmPin);
+    void begin();
     void setSpeed(float speed);
     void stop();
 

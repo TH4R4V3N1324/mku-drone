@@ -7,7 +7,16 @@
  * @return None
  */
 Motor::Motor(int pwmPin) : pwmPin(pwmPin) {
+}
+
+/**
+ * @brief Begin the motor operation
+ * @details Attaches the motor to the specified PWM pin and stops it initially
+ * @return None
+ */
+void Motor::begin() {
     motor.attach(pwmPin);
+    stop();
 }
 
 /**

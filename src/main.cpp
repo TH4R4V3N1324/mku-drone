@@ -30,6 +30,10 @@ unsigned long previousLoopTime;
 void setup() {
   Serial.begin(115200);
   Wire.begin();
+  motor1.begin();
+  motor2.begin();
+  motor3.begin();
+  motor4.begin();
   imu.init();
   imu.calibrate();
   receiver.init();
