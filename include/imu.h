@@ -24,9 +24,9 @@ public:
           pitch(0.0f),
           roll(0.0f),
           yaw(0.0f),
-          pitchOffset(0.0f),
-          rollOffset(0.0f),
-          yawOffset(0.0f) {}
+          gyroOffsetX(0.0f),
+          gyroOffsetY(0.0f),
+          gyroOffsetZ(0.0f) {}
     void init(int address = IMU_ADDRESS);
     void calibrate();
     void readData();
@@ -96,9 +96,9 @@ private:
     float pitch;
     float roll;
     float yaw;
-    float pitchOffset;
-    float rollOffset;
-    float yawOffset;
+    float gyroOffsetX;
+    float gyroOffsetY;
+    float gyroOffsetZ;
 };
 
 #endif // IMU_H

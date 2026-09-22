@@ -100,7 +100,6 @@ platformio.ini            PlatformIO environment configuration
 
 ## TODO Before Flight
 
-- [ ] Fix IMU calibration: average the raw gyro readings while the aircraft is still, then subtract those offsets from every later gyro reading. The current calibration averages angles but does not apply the offsets.
 - [ ] Replace the blocking `pulseIn()` receiver reads with interrupt-based capture, or confirm that the control loop stays fast enough.
 - [ ] Normalize and limit PID outputs before sending them to the mixer. The mixer and `Motor::setSpeed()` must use the same `0.0-1.0` scale.
 - [ ] Add arming/disarming and a receiver-loss failsafe that stops all motors.

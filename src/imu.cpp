@@ -17,25 +17,39 @@ void IMU::init(int address) {
 
 /**
  * @brief Calibrate the IMU
- * @details Calibrates the IMU by reading multiple samples and averaging them to find offsets for pitch, roll, and yaw
+ * @details Calibrates the gyroscope by averaging stationary angular-rate samples
  * @return None
  */
 void IMU::calibrate() {
-    this->pitchOffset = 0.0f;
-    this->rollOffset = 0.0f;
-    this->yawOffset = 0.0f;
+    const int numSamples = 100;
+    float sumGyroX = 0.0f;
+    float sumGyroY = 0.0f;
+    float sumGyroZ = 0.0f;
 
-    // Read a number of samples and average them to find the offsets
-    for (int i = 0; i < 100; i++) {
-        readData();
-        this->pitchOffset += pitch;
-        this->rollOffset += roll;
-        this->yawOffset += yaw;
-        delay(10);
+    for (int i = 0; i < numSamples; ++i) {
+        Wire.beginTransmission(i2cAddress);
+        Wire.write(0x43);
+        if (Wire.endTransmission(false) != 0 || Wire.requestFrom(i2cAddress, 6, true) != 6) {
+            return;
+        }
+
+        int16_t gx = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
+        int16_t gy = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
+        int16_t gz = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
+
+        sumGyroX += gx / GYRO_SCALE;
+        sumGyroY += gy / GYRO_SCALE;
+        sumGyroZ += gz / GYRO_SCALE;
+        delay(5);
     }
-    this->pitchOffset /= 100.0f;
-    this->rollOffset /= 100.0f;
-    this->yawOffset /= 100.0f;
+
+    gyroOffsetX = sumGyroX / numSamples;
+    gyroOffsetY = sumGyroY / numSamples;
+    gyroOffsetZ = sumGyroZ / numSamples;
+    pitch = 0.0f;
+    roll = 0.0f;
+    yaw = 0.0f;
+    lastReadTime = millis();
 }
 
 /**
@@ -61,9 +75,9 @@ void IMU::readData() {
     data.accelX = (ax / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
     data.accelY = (ay / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
     data.accelZ = (az / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
-    data.gyroX = (gx / GYRO_SCALE); // Convert to degrees/s
-    data.gyroY = (gy / GYRO_SCALE); // Convert to degrees/s
-    data.gyroZ = (gz / GYRO_SCALE); // Convert to degrees
+    data.gyroX = (gx / GYRO_SCALE) - gyroOffsetX; // Convert to degrees/s
+    data.gyroY = (gy / GYRO_SCALE) - gyroOffsetY; // Convert to degrees/s
+    data.gyroZ = (gz / GYRO_SCALE) - gyroOffsetZ; // Convert to degrees
     data.temperature = (temp / TEMP_SCALE) + TEMP_OFFSET; // Convert to degrees Celsius
 
     calculateOrientation();
@@ -115,5 +129,6 @@ void IMU::printData() {
  */
 void IMU::printOrientation() {
     Serial.print("Pitch: "); Serial.print(pitch);
+    Serial.print(" | Yaw: "); Serial.print(yaw);
     Serial.print(" | Roll: "); Serial.println(roll);
 }
