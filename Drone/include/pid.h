@@ -60,6 +60,13 @@ public:
         firstRun = true;
     }
 
+    void setKp(float newKp) { kp = newKp; }
+    void setKi(float newKi) { ki = newKi; }
+    void setKd(float newKd) { kd = newKd; }
+    float getKp() const { return kp; }
+    float getKi() const { return ki; }
+    float getKd() const { return kd; }
+
 private:
     float kp, ki, kd;
     float outputMin, outputMax;
