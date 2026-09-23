@@ -36,17 +36,11 @@ unsigned long previousLoopTime;
 void setup() {
   Serial.begin(115200);
   Wire.begin();
-  motor1.begin();
-  motor2.begin();
-  motor3.begin();
-  motor4.begin();
+  mixer.beginAllMotors();
   imu.init();
   imu.calibrate();
   receiver.init();
-  motor1.stop();
-  motor2.stop();
-  motor3.stop();
-  motor4.stop();
+  mixer.stopAllMotors();
   delay(2000);
   previousLoopTime = micros();
 }
@@ -76,7 +70,7 @@ void run() {
 
   float throttle = receiver.getThrottle();
   if (throttle <= 0.05f) {
-    motor1.stop(); motor2.stop(); motor3.stop(); motor4.stop();
+    mixer.stopAllMotors();
     return;
   }
 
@@ -134,10 +128,7 @@ void test() {
   float yaw = receiver.getYaw() * 0.20f;
 
   if (throttle <= 0.05f) {
-    motor1.stop();
-    motor2.stop();
-    motor3.stop();
-    motor4.stop();
+    mixer.stopAllMotors();
     return;
   }
 

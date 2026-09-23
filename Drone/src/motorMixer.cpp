@@ -28,3 +28,25 @@ void MotorMixer::mixMotors(float throttle, float roll, float pitch, float yaw) {
     motor3.setSpeed(motor3Speed);
     motor4.setSpeed(motor4Speed);
 }
+
+/**
+ * @brief Initialize all motors
+ * @return None
+ */
+void MotorMixer::beginAllMotors() {
+    motor1.begin();
+    motor2.begin();
+    motor3.begin();
+    motor4.begin();
+}
+
+/**
+ * @brief Stop all motors
+ * @return None
+ */
+void MotorMixer::stopAllMotors() {
+    motor1.stop();
+    motor2.stop();
+    motor3.stop();
+    motor4.stop();
+}
