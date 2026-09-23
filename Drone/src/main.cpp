@@ -1,10 +1,14 @@
 #include <Arduino.h>
+#include <Wire.h>
+#include <string.h>
 #include "imu.h"
 #include "motorMixer.h"
 #include "motor.h"
 #include "pid.h"
 #include "receiver.h"
-#include <Wire.h>
+#include "serialTuner.h"
+
+#define TUNE_PID 1
 
 void run();
 void test();
@@ -25,6 +29,8 @@ Receiver receiver(throttlePin, rollPin, pitchPin, yawPin);
 PID rollPID(0.02, 0.0, 0.0, -0.3, 0.3); // PID controller for roll
 PID pitchPID(0.02, 0.0, 0.0, -0.3, 0.3); // PID controller for pitch
 PID yawPID(0.05, 0.0, 0.0, -0.2, 0.2); // PID controller for yaw
+SerialTuner tuner(rollPID, pitchPID, yawPID);
+
 unsigned long previousLoopTime;
 
 void setup() {
@@ -46,8 +52,9 @@ void setup() {
 }
 
 void loop() {
-  //run();
-  test();
+  if (TUNE_PID) {tuner.update();}
+  run();
+  //test();
 }
 
 /**
@@ -65,11 +72,14 @@ void run() {
   }
 
   imu.readData();
-  //imu.printOrientation();
   receiver.readData();
-  //receiver.printData();
 
   float throttle = receiver.getThrottle();
+  if (throttle <= 0.05f) {
+    motor1.stop(); motor2.stop(); motor3.stop(); motor4.stop();
+    return;
+  }
+
   float rollSetpoint = receiver.getRoll() * 30.0f;
   float pitchSetpoint = receiver.getPitch() * 30.0f;
   float yawRateSetpoint = receiver.getYaw() * 180.0f;
@@ -77,6 +87,33 @@ void run() {
   float rollOutput = rollPID.compute(rollSetpoint, imu.getRoll(), dt);
   float pitchOutput = pitchPID.compute(pitchSetpoint, imu.getPitch(), dt);
   float yawOutput = yawPID.compute(yawRateSetpoint, imu.getGyroZ(), dt);
+
+  if (TUNE_PID) {
+    const char* axis = tuner.getActiveAxisName();
+    float setpointToPrint, measuredToPrint, outputToPrint;
+    if (strcmp(axis, "roll") == 0) {
+      setpointToPrint = rollSetpoint;
+      measuredToPrint = imu.getRoll();
+      outputToPrint = rollOutput;
+    } else if (strcmp(axis, "pitch") == 0) {
+      setpointToPrint = pitchSetpoint;
+      measuredToPrint = imu.getPitch();
+      outputToPrint = pitchOutput;
+    } else if (strcmp(axis, "yaw") == 0) {
+      setpointToPrint = yawRateSetpoint;
+      measuredToPrint = imu.getGyroZ();
+      outputToPrint = yawOutput;
+    } else {
+      setpointToPrint = 0.0f;
+      measuredToPrint = 0.0f;
+      outputToPrint = 0.0f;
+    }
+
+    //Plot with Teleplot to tune PID parameters
+    Serial.print(">Setpoint: "); Serial.println(setpointToPrint);
+    Serial.print(">Actual: "); Serial.println(measuredToPrint);
+    Serial.print(">Output: "); Serial.println(outputToPrint);
+  }
 
   mixer.mixMotors(throttle, rollOutput, pitchOutput, yawOutput);
 }
