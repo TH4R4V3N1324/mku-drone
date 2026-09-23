@@ -22,9 +22,9 @@ constexpr uint8_t pitchPin = 10;
 constexpr uint8_t yawPin = 11;
 Receiver receiver(throttlePin, rollPin, pitchPin, yawPin);
 
-PID rollPID(1.3, 0.04, 18.0); // PID controller for roll
-PID pitchPID(1.3, 0.04, 18.0); // PID controller for pitch
-PID yawPID(4.0, 0.02, 0.0); // PID controller for yaw
+PID rollPID(0.02, 0.0, 0.0, -0.3, 0.3); // PID controller for roll
+PID pitchPID(0.02, 0.0, 0.0, -0.3, 0.3); // PID controller for pitch
+PID yawPID(0.05, 0.0, 0.0, -0.2, 0.2); // PID controller for yaw
 unsigned long previousLoopTime;
 
 void setup() {

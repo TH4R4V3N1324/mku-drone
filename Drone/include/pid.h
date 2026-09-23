@@ -3,28 +3,69 @@
 
 class PID {
 public:
-    PID(float kp, float ki, float kd) : kp(kp), ki(ki), kd(kd), prevError(0), integral(0) {}
+    /**
+     * @brief Construct a new PID object
+     * @param[in] kp         Proportional gain
+     * @param[in] ki         Integral gain
+     * @param[in] kd         Derivative gain
+     * @param[in] outputMin  Minimum output value (clamped)
+     * @param[in] outputMax  Maximum output value (clamped)
+     */
+    PID(float kp, float ki, float kd, float outputMin, float outputMax) : 
+        kp(kp), ki(ki), kd(kd),
+        outputMin(outputMin), outputMax(outputMax),
+        prevMeasured(0), integral(0), firstRun(true) {}
+
     /**
      * @brief Compute the PID output
-     * @details Computes the PID output based on the setpoint, measured value, and time delta
-     * @param[in] setpoint The desired setpoint value
-     * @param[in] measured The current measured value
-     * @param[in] dt The time delta in seconds since the last computation
-     * @return The computed PID output
+     * @param[in] setpoint  Desired value
+     * @param[in] measured  Current measured value
+     * @param[in] dt        Time delta in seconds since the last call (must be > 0)
+     * @return Clamped PID output in [outputMin, outputMax]
      */
     float compute(float setpoint, float measured, float dt) {
+        if (dt <= 0.0f) {
+            return 0.0f; // bad timestep — don't poison integral/derivative
+        }
+ 
         float error = setpoint - measured;
+ 
+        //Integral with anti-windup clamp
         integral += error * dt;
-        float derivative = (error - prevError) / dt;
-        prevError = error;
-        return kp * error + ki * integral + kd * derivative;
+        if (ki > 0.0f) {
+            float integralLimit = (outputMax - outputMin) / ki;
+            integral = constrain(integral, -integralLimit, integralLimit);
+        } else {
+            integral = 0.0f;
+        }
+ 
+        //Derivative on measurement (avoids setpoint-change kick)
+        float derivative = 0.0f;
+        if (!firstRun) {
+            derivative = -(measured - prevMeasured) / dt;
+        }
+        prevMeasured = measured;
+        firstRun = false;
+ 
+        float output = kp * error + ki * integral + kd * derivative;
+        return constrain(output, outputMin, outputMax);
     }
+ 
+    /**
+     * @brief Reset internal state (call when re-arming / switching modes)
+     */
+    void reset() {
+        integral = 0.0f;
+        prevMeasured = 0.0f;
+        firstRun = true;
+    }
+
 private:
-    float kp;
-    float ki;
-    float kd;
-    float prevError;
+    float kp, ki, kd;
+    float outputMin, outputMax;
+    float prevMeasured; 
     float integral;
+    bool firstRun = true;
 };
 
 #endif // PID_H
