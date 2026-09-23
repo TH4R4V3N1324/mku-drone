@@ -22,14 +22,26 @@
  */
 class SerialTuner {
 public:
+    /**
+     * @brief Construct a new SerialTuner object
+     * @param[in] rollPID   Reference to the roll PID controller
+     * @param[in] pitchPID  Reference to the pitch PID controller
+     * @param[in] yawPID    Reference to the yaw PID controller
+     */
     SerialTuner(PID &rollPID, PID &pitchPID, PID &yawPID)
         : rollPID(rollPID), pitchPID(pitchPID), yawPID(yawPID),
           active(&rollPID), activeName("roll") {}
 
-    /// Name of the axis currently selected for tuning ("roll", "pitch", or "yaw")
+    /**
+     * @brief Get the name of the axis currently selected for tuning
+     * @return The name of the active axis ("roll", "pitch", or "yaw")
+     */
     const char* getActiveAxisName() const { return activeName; }
 
-    /// Non-blocking — call every loop() iteration.
+    /**
+     * @brief Call this once per loop() to process any incoming serial commands
+     * @return None
+     */
     void update() {
         while (Serial.available() > 0) {
             char c = Serial.read();
@@ -52,6 +64,11 @@ private:
     const char *activeName;
     String lineBuffer;
 
+    /**
+     * @brief Handle a line of input from the serial monitor
+     * @param line The line of input to process
+     * @return None
+     */
     void handleLine(String line) {
         line.trim();
         line.toLowerCase();
@@ -90,6 +107,10 @@ private:
         }
     }
 
+    /**
+     * @brief Print the current gains of the active PID controller
+     * @return None
+     */
     void printGains() {
         Serial.print(activeName);
         Serial.print(F(" gains -> kp: "));
