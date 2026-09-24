@@ -21,7 +21,7 @@ void IMU::init(int address) {
  * @return None
  */
 void IMU::calibrate() {
-    const int numSamples = 100;
+    const int numSamples = 2000;
     float sumGyroX = 0.0f;
     float sumGyroY = 0.0f;
     float sumGyroZ = 0.0f;
