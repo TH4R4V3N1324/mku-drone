@@ -18,15 +18,22 @@ const int IMU_ADDRESS = 0x68;
 
 class IMU {
 public:
-    IMU()
-        : data{},
-          lastReadTime(0),
-          pitch(0.0f),
-          roll(0.0f),
-          yaw(0.0f),
-          gyroOffsetX(0.0f),
-          gyroOffsetY(0.0f),
-          gyroOffsetZ(0.0f) {}
+    IMU(): 	
+		data{},
+        lastReadTime(0),
+      	lastFilterTime(0),
+      	pitch(0.0f),
+		roll(0.0f),
+		yaw(0.0f),
+		gyroOffsetX(0.0f),
+		gyroOffsetY(0.0f),
+		gyroOffsetZ(0.0f),
+        accelPitchOffset(0.0f),
+        accelRollOffset(0.0f),
+		filteredGyroX(0.0f),
+		filteredGyroY(0.0f),
+		filteredGyroZ(0.0f),
+		filterInitialized(false) {}
     void init(int address = IMU_ADDRESS);
     void calibrate();
     void readData();
@@ -86,6 +93,7 @@ private:
     void calculateOrientation();
     IMUData data;
     unsigned long lastReadTime;
+    unsigned long lastFilterTime;
     int i2cAddress;
     const float ACCEL_SCALE = 16384.0; // Scale factor for accelerometer
     const float GYRO_SCALE = 131.0; // Scale factor for gyroscope
@@ -93,12 +101,19 @@ private:
     const float TEMP_OFFSET = 36.53; // Offset for temperature
     const float GRAVITY = 9.80665; // Gravity constant for m/s^2 conversion
     const float ALPHA = 0.98; // Complementary filter constant
+    const float GYRO_FILTER_CUTOFF_HZ = 30.0f;
     float pitch;
     float roll;
     float yaw;
     float gyroOffsetX;
     float gyroOffsetY;
     float gyroOffsetZ;
+    float accelPitchOffset;
+    float accelRollOffset;
+    float filteredGyroX;
+    float filteredGyroY;
+    float filteredGyroZ;
+    bool filterInitialized;
 };
 
 #endif // IMU_H
