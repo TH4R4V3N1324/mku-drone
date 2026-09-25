@@ -38,6 +38,7 @@ unsigned long previousLoopTime;
 void setup() {
   Serial.begin(115200);
   Wire.begin();
+  Wire.setClock(400000); // Set I2C clock speed to 400kHz
   mixer.beginAllMotors();
   imu.init();
   imu.calibrate();
