@@ -10,6 +10,8 @@
 
 #define TUNE_PID 1
 
+constexpr float MAX_THROTTLE = 0.85f; // 1850 us, leaving correction headroom
+
 void run();
 void test();
 
@@ -73,6 +75,7 @@ void run() {
     mixer.stopAllMotors();
     return;
   }
+  throttle = constrain(throttle, 0.0f, MAX_THROTTLE);
 
   float rollSetpoint = receiver.getRoll() * 30.0f;
   float pitchSetpoint = receiver.getPitch() * 30.0f;
