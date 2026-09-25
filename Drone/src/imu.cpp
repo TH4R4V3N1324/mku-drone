@@ -8,10 +8,22 @@
  */
 void IMU::init(int address) {
     this->i2cAddress = address;
+
     Wire.beginTransmission(i2cAddress);
     Wire.write(0x6B); // Power management register
     Wire.write(0x00); // Set to zero (wakes up the MPU-6050)
     Wire.endTransmission(true);
+
+    Wire.beginTransmission(i2cAddress);
+    Wire.write(0x1A); // Configuration register
+    Wire.write(0x03); // Set DLPF to 3 (44Hz)
+    Wire.endTransmission(true);
+
+    Wire.beginTransmission(i2cAddress);
+    Wire.write(0x19); // Sample rate divider register
+    Wire.write(0x09); // Set sample rate to 100Hz
+    Wire.endTransmission(true);
+
     lastReadTime = millis();
 }
 
@@ -21,22 +33,34 @@ void IMU::init(int address) {
  * @return None
  */
 void IMU::calibrate() {
-    const int numSamples = 100;
+    const int numSamples = 2000;
     float sumGyroX = 0.0f;
     float sumGyroY = 0.0f;
     float sumGyroZ = 0.0f;
+    float sumAccelPitch = 0.0f;
+    float sumAccelRoll = 0.0f;
 
     for (int i = 0; i < numSamples; ++i) {
         Wire.beginTransmission(i2cAddress);
-        Wire.write(0x43);
-        if (Wire.endTransmission(false) != 0 || Wire.requestFrom(i2cAddress, 6, true) != 6) {
+        Wire.write(0x3B);
+        if (Wire.endTransmission(false) != 0 || Wire.requestFrom(i2cAddress, 14, true) != 14) {
             return;
         }
 
+        int16_t ax = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
+        int16_t ay = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
+        int16_t az = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
+        Wire.read();
+        Wire.read();
         int16_t gx = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
         int16_t gy = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
         int16_t gz = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
 
+        float accelX = ax / ACCEL_SCALE;
+        float accelY = ay / ACCEL_SCALE;
+        float accelZ = az / ACCEL_SCALE;
+        sumAccelPitch += atan2(accelY, accelZ) * 180.0f / PI;
+        sumAccelRoll += atan2(-accelX, sqrt(accelY * accelY + accelZ * accelZ)) * 180.0f / PI;
         sumGyroX += gx / GYRO_SCALE;
         sumGyroY += gy / GYRO_SCALE;
         sumGyroZ += gz / GYRO_SCALE;
@@ -46,10 +70,14 @@ void IMU::calibrate() {
     gyroOffsetX = sumGyroX / numSamples;
     gyroOffsetY = sumGyroY / numSamples;
     gyroOffsetZ = sumGyroZ / numSamples;
+    accelPitchOffset = sumAccelPitch / numSamples;
+    accelRollOffset = sumAccelRoll / numSamples;
     pitch = 0.0f;
     roll = 0.0f;
     yaw = 0.0f;
-    lastReadTime = millis();
+    lastReadTime = micros();
+    lastFilterTime = 0;
+    filterInitialized = false;
 }
 
 /**
@@ -75,10 +103,34 @@ void IMU::readData() {
     data.accelX = (ax / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
     data.accelY = (ay / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
     data.accelZ = (az / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
-    data.gyroX = (gx / GYRO_SCALE) - gyroOffsetX; // Convert to degrees/s
-    data.gyroY = (gy / GYRO_SCALE) - gyroOffsetY; // Convert to degrees/s
-    data.gyroZ = (gz / GYRO_SCALE) - gyroOffsetZ; // Convert to degrees
     data.temperature = (temp / TEMP_SCALE) + TEMP_OFFSET; // Convert to degrees Celsius
+    
+    float rawGyroX = (gx / GYRO_SCALE) - gyroOffsetX;
+    float rawGyroY = (gy / GYRO_SCALE) - gyroOffsetY;
+    float rawGyroZ = (gz / GYRO_SCALE) - gyroOffsetZ;
+
+    unsigned long now = micros();
+    float filterDt = lastFilterTime == 0
+        ? 0.0f
+        : (now - lastFilterTime) / 1000000.0f;
+    lastFilterTime = now;
+
+    if (!filterInitialized || filterDt <= 0.0f) {
+        filteredGyroX = rawGyroX;
+        filteredGyroY = rawGyroY;
+        filteredGyroZ = rawGyroZ;
+        filterInitialized = true;
+    } else {
+        const float timeConstant = 1.0f / (2.0f * PI * GYRO_FILTER_CUTOFF_HZ);
+        const float filterAlpha = filterDt / (timeConstant + filterDt);
+        filteredGyroX += filterAlpha * (rawGyroX - filteredGyroX);
+        filteredGyroY += filterAlpha * (rawGyroY - filteredGyroY);
+        filteredGyroZ += filterAlpha * (rawGyroZ - filteredGyroZ);
+    }
+
+    data.gyroX = filteredGyroX;
+    data.gyroY = filteredGyroY;
+    data.gyroZ = filteredGyroZ;
 
     calculateOrientation();
 }
@@ -90,16 +142,16 @@ void IMU::readData() {
  */
 void IMU::calculateOrientation() {
     // Calculate pitch and roll using complementary filter
-    unsigned long now = millis();
-    float dt = (now - lastReadTime) / 1000.0f;
+    unsigned long now = micros();
+    float dt = (now - lastReadTime) / 1000000.0f;
     lastReadTime = now;
 
     if (dt <= 0.0f || dt > 0.1f) {
         dt = 0.01f;
     }
 
-    float accelPitch = atan2(data.accelY, data.accelZ) * 180 / PI;
-    float accelRoll = atan2(-data.accelX, sqrt(data.accelY * data.accelY + data.accelZ * data.accelZ)) * 180 / PI;
+    float accelPitch = atan2(data.accelY, data.accelZ) * 180.0f / PI - accelPitchOffset;
+    float accelRoll = atan2(-data.accelX, sqrt(data.accelY * data.accelY + data.accelZ * data.accelZ)) * 180.0f / PI - accelRollOffset;
     float gyroPitch = pitch + data.gyroX * dt;
     float gyroRoll = roll + data.gyroY * dt;
 
