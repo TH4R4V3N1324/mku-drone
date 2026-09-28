@@ -50,6 +50,21 @@ pio device monitor --baud 115200
 
 Select the upload port in PlatformIO or add an `upload_port` setting to `platformio.ini` when automatic port detection does not find the board.
 
+## ESC calibration
+
+ESC calibration is built into the flight-controller firmware and is selected with the `CALIBRATE_ESCS` flag in `src/main.cpp`. When enabled, the firmware sends the same calibration signal to all four ESC outputs (Arduino pins `4-7`): maximum throttle for 6 seconds, followed by minimum throttle for 6 seconds. It then stops and does not enter the normal flight loop.
+
+With propellers removed:
+
+1. Set `CALIBRATE_ESCS` to `1` in `src/main.cpp`.
+2. Upload the firmware with the ESCs ready to receive power, but with propellers removed.
+3. Power the Arduino and ESCs when prompted by the serial messages, then listen for the ESC confirmation tones.
+4. Wait through the 6-second maximum-throttle phase and the 6-second minimum-throttle phase.
+5. Power-cycle the ESCs after the firmware reports that calibration pulses are complete.
+6. Set `CALIBRATE_ESCS` back to `0` and upload the firmware again before flying.
+
+The calibration routine prints its progress at `115200` baud and intentionally halts after sending both pulse ranges. Keep the motors disconnected or the propellers removed, and use a common ground between the Arduino and ESC signal ground.
+
 ## Firmware behavior
 
 At startup the firmware initializes serial communication at `115200` baud, wakes the MPU-6050, averages 100 stationary gyro samples for calibration, initializes the receiver, stops all motors, and waits two seconds.

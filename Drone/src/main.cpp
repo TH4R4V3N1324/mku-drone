@@ -8,12 +8,16 @@
 #include "receiver.h"
 #include "serialTuner.h"
 
-#define TUNE_PID 1
+#define TUNE_PID 0        // Set to 1 to enable PID tuning via serial commands
+#define CALIBRATE_ESCS 0  // Set to 1 to calibrate ESCs on startup (ensure props are removed) 
 
 constexpr float MAX_THROTTLE = 0.85f; // 1850 us, leaving correction headroom
 
 void run();
 void test();
+#if CALIBRATE_ESCS
+void calibrateEscs();
+#endif
 
 Motor motor1(4); // PWM pin for motor 1
 Motor motor2(5); // PWM pin for motor 2
@@ -37,15 +41,19 @@ unsigned long previousLoopTime;
 
 void setup() {
   Serial.begin(115200);
-  Wire.begin();
-  Wire.setClock(400000); // Set I2C clock speed to 400kHz
-  mixer.beginAllMotors();
-  imu.init();
-  imu.calibrate();
-  receiver.init();
-  mixer.stopAllMotors();
-  delay(2000);
-  previousLoopTime = micros();
+  #if CALIBRATE_ESCS
+    calibrateEscs();
+  #else
+    Wire.begin();
+    Wire.setClock(400000); // Set I2C clock speed to 400kHz
+    mixer.beginAllMotors();
+    imu.init();
+    imu.calibrate();
+    receiver.init();
+    mixer.stopAllMotors();
+    delay(2000);
+    previousLoopTime = micros();
+  #endif
 }
 
 void loop() {
@@ -70,7 +78,6 @@ void run() {
 
   imu.readData();
   receiver.readData();
-  receiver.printData();
 
   float throttle = receiver.getThrottle();
   if (throttle <= 0.05f) {
@@ -139,3 +146,34 @@ void test() {
 
   mixer.mixMotors(throttle, roll, pitch, yaw);
 }
+
+#if CALIBRATE_ESCS
+/**
+ * @brief Calibrate the ESCs by sending a high throttle signal followed by a low throttle signal
+ * @details This function should be called once on startup with the propellers removed.
+ * It sends a high throttle signal for 2 seconds, then a low throttle signal for 2 seconds.
+ * @return None
+ */
+void calibrateEscs() {
+  mixer.beginAllMotors();
+
+  Serial.println(F("ESC calibration: props OFF."));
+  Serial.println(F("Sending MAX throttle — power the ESCs now."));
+  unsigned long start = millis();
+  while (millis() - start < 6000) {
+    motor1.setSpeed(1.0f); motor2.setSpeed(1.0f);
+    motor3.setSpeed(1.0f); motor4.setSpeed(1.0f);
+  }
+
+  Serial.println(F("Sending MIN throttle — listen for confirmation beeps."));
+  start = millis();
+  while (millis() - start < 6000) {
+    motor1.setSpeed(0.0f); motor2.setSpeed(0.0f);
+    motor3.setSpeed(0.0f); motor4.setSpeed(0.0f);
+  }
+
+  Serial.println(F("Calibration pulses sent. Halting — power-cycle to arm normally."));
+  mixer.stopAllMotors();
+  while (true) {}   // stop here on purpose, don't fall into run()
+}
+#endif
