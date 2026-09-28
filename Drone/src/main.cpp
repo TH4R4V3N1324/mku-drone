@@ -160,14 +160,14 @@ void calibrateEscs() {
   Serial.println(F("ESC calibration: props OFF."));
   Serial.println(F("Sending MAX throttle — power the ESCs now."));
   unsigned long start = millis();
-  while (millis() - start < 6000) {
+  while (millis() - start < 15000) {
     motor1.setSpeed(1.0f); motor2.setSpeed(1.0f);
     motor3.setSpeed(1.0f); motor4.setSpeed(1.0f);
   }
 
   Serial.println(F("Sending MIN throttle — listen for confirmation beeps."));
   start = millis();
-  while (millis() - start < 6000) {
+  while (millis() - start < 10000) {
     motor1.setSpeed(0.0f); motor2.setSpeed(0.0f);
     motor3.setSpeed(0.0f); motor4.setSpeed(0.0f);
   }
