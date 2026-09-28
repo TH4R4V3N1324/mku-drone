@@ -23,9 +23,9 @@ MotorMixer mixer(motor1, motor2, motor3, motor4);
 IMU imu;
 
 constexpr uint8_t throttlePin = 9;
-constexpr uint8_t rollPin = 8;
+constexpr uint8_t rollPin = 11;
 constexpr uint8_t pitchPin = 10;
-constexpr uint8_t yawPin = 11;
+constexpr uint8_t yawPin = 8;
 Receiver receiver(throttlePin, rollPin, pitchPin, yawPin);
 
 PID rollPID(0.02, 0.0, 0.0, -0.3, 0.3); // PID controller for roll
@@ -70,6 +70,7 @@ void run() {
 
   imu.readData();
   receiver.readData();
+  receiver.printData();
 
   float throttle = receiver.getThrottle();
   if (throttle <= 0.05f) {

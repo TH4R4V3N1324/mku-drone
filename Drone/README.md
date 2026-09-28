@@ -16,9 +16,9 @@ This is a development prototype, not flight-ready software. Keep propellers remo
 | Channel | Arduino pin |
 | --- | ---: |
 | Throttle | 9 |
-| Roll | 8 |
+| Roll | 11 |
 | Pitch | 10 |
-| Yaw | 11 |
+| Yaw | 8 |
 
 ### Motor outputs
 
