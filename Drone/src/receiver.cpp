@@ -82,7 +82,7 @@ void Receiver::readData() {
 
     throttle = throttleValid ? readChannel(pulseSnapshot[throttleChannel], 0.0f, 1.0f) : 0.0f;
     roll = rollValid ? readChannel(pulseSnapshot[rollChannel], -1.0f, 1.0f) : 0.0f;
-    pitch = pitchValid ? readChannel(pulseSnapshot[pitchChannel], -1.0f, 1.0f) : 0.0f;
+    pitch = pitchValid ? -readChannel(pulseSnapshot[pitchChannel], -1.0f, 1.0f) : 0.0f;
     yaw = yawValid ? readChannel(pulseSnapshot[yawChannel], -1.0f, 1.0f) : 0.0f;
 }
 
