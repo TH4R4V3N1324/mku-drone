@@ -33,8 +33,7 @@ public:
         //Integral with anti-windup clamp
         integral += error * dt;
         if (ki > 0.0f) {
-            float integralLimit = (outputMax - outputMin) / ki;
-            integral = constrain(integral, -integralLimit, integralLimit);
+            integral = constrain(integral, outputMin / ki, outputMax / ki);
         } else {
             integral = 0.0f;
         }
