@@ -27,13 +27,36 @@ MotorMixer mixer(motor1, motor2, motor3, motor4);
 IMU imu;
 
 constexpr uint8_t throttlePin = 9;
-constexpr uint8_t rollPin = 11;
-constexpr uint8_t pitchPin = 10;
-constexpr uint8_t yawPin = 8;
-constexpr uint8_t aux1Pin = 12;
-constexpr uint8_t aux2Pin = 13;
+constexpr uint8_t rollPin     = 11;
+constexpr uint8_t pitchPin    = 10;
+constexpr uint8_t yawPin      = 8;
+constexpr uint8_t aux1Pin     = 12;
+constexpr uint8_t aux2Pin     = 13;
 Receiver receiver(throttlePin, rollPin, pitchPin, yawPin, aux1Pin, aux2Pin);
 
+constexpr float HOVER_CORRECTION_LIMIT = 0.25f;  // PID output range (+/-)
+constexpr float HOVER_BAND             = 0.25f;  // final throttle stays within hoverThrottle +/- this
+constexpr float HOVER_THROTTLE_MIN     = 0.15f;  // floor in hover (must be above the 0.05 motor cutoff)
+constexpr float HOVER_SLEW_RATE        = 0.3f;   // max throttle change per second
+constexpr float HOVER_MIN_TILT_COS     = 0.7f;   // limits tilt compensation to ~45 degrees
+constexpr float ENTRY_MAX_VZ           = 0.3f;   // m/s, must be below this to engage
+constexpr float ENTRY_HOLD_S           = 0.5f;   // seconds the conditions must hold
+constexpr float ENTRY_MIN_THROTTLE     = 0.2f;   // can't engage hover on the ground
+constexpr float CLIMB_DEADBAND         = 0.1f;   // m/s
+constexpr float THROTTLE_FILTER_TAU    = 0.3f;   // s, smoothing of stick throttle for capture
+constexpr float ACCEL_FILTER_HZ        = 20.0f;  // low-pass on vertical accel
+constexpr float VZ_LEAK_TAU            = 2.0f;   // s, drift decay time constant
+constexpr float GRAVITY                = 9.80665f; // m/s^2
+
+static bool  hoverActive    = false;
+static float vz             = 0.0f;
+static float azFilt         = 0.0f;
+static float throttleFilt   = 0.0f;
+static float hoverThrottle  = 0.0f;
+static float hoverCmd       = 0.0f;
+static float steadyTime     = 0.0f;
+
+PID altitudePID(0.1, 0.0, 0.0, -HOVER_CORRECTION_LIMIT, HOVER_CORRECTION_LIMIT); // PID controller for altitude
 PID rollPID(0.02, 0.0, 0.0, -0.3, 0.3); // PID controller for roll
 PID pitchPID(0.02, 0.0, 0.0, -0.3, 0.3); // PID controller for pitch
 PID yawPID(0.05, 0.0, 0.0, -0.2, 0.2); // PID controller for yaw
@@ -73,20 +96,79 @@ void run() {
   unsigned long now = micros();
   float dt = (now - previousLoopTime) / 1000000.0f;
   previousLoopTime = now;
-
-  if (dt <= 0.0f || dt > 0.1f) {
-    dt = 0.01f;
-  }
+  if (dt <= 0.0f || dt > 0.1f) dt = 0.01f;
 
   imu.readData();
   receiver.readData();
 
-  float throttle = receiver.getThrottle();
-  if (throttle <= 0.05f) {
-    mixer.stopAllMotors();
-    return;
+  float stickThrottle = receiver.getThrottle();
+  bool hoverSwitch = receiver.getAux1() > 0.5f;
+
+  // Filtered stick throttle (used for hover capture)
+  throttleFilt += (dt / (THROTTLE_FILTER_TAU + dt)) * (stickThrottle - throttleFilt);
+
+  // Vertical velocity estimate (runs every loop so it's valid on entry)
+  float rollRad  = imu.getRoll()  * DEG_TO_RAD;
+  float pitchRad = imu.getPitch() * DEG_TO_RAD;
+  float tiltCos  = cosf(rollRad) * cosf(pitchRad);
+
+  float azWorld = imu.getAccelZ() * tiltCos - GRAVITY;   // flip sign if your Z axis points down
+  const float accelTau = 1.0f / (2.0f * PI * ACCEL_FILTER_HZ);
+  azFilt += (dt / (accelTau + dt)) * (azWorld - azFilt);
+
+  vz += azFilt * dt;
+  vz -= vz * dt / VZ_LEAK_TAU;                           // dt-independent leak
+  if (!hoverActive && stickThrottle <= 0.05f) vz = 0.0f; // on the ground / idle
+
+  // Hover entry / exit
+  if (!hoverSwitch) {
+    hoverActive = false;
+    steadyTime = 0.0f;
+  } else if (!hoverActive) {
+    bool steady = fabsf(vz) < ENTRY_MAX_VZ && throttleFilt > ENTRY_MIN_THROTTLE;
+    steadyTime = steady ? steadyTime + dt : 0.0f;
+
+    if (steadyTime >= ENTRY_HOLD_S) {
+      hoverActive   = true;
+      hoverThrottle = throttleFilt;   // captured hover throttle
+      hoverCmd      = hoverThrottle;  // start the slew limiter here (bumpless)
+      vz            = 0.0f;
+      altitudePID.reset();
+    }
   }
-  throttle = constrain(throttle, 0.0f, MAX_THROTTLE);
+
+  // Throttle
+  float throttle;
+  float hoverSetpoint = 0.0f;
+  float hoverMeasured = vz;
+  float hoverCorrection = 0.0f;
+  if (hoverActive) {
+    float climbRate = receiver.getAux2() * 2.0f - 1.0f;  // +/-1 m/s
+    if (fabsf(climbRate) < CLIMB_DEADBAND) climbRate = 0.0f;
+
+    hoverSetpoint = climbRate;
+    hoverCorrection = altitudePID.compute(hoverSetpoint, hoverMeasured, dt);
+
+    // Clamp to a band around the captured throttle, above the floor
+    float lower  = fmaxf(hoverThrottle - HOVER_BAND, HOVER_THROTTLE_MIN);
+    float upper  = hoverThrottle + HOVER_BAND;
+    float target = constrain(hoverThrottle + hoverCorrection, lower, upper);
+
+    // Slew limit
+    float maxStep = HOVER_SLEW_RATE * dt;
+    hoverCmd += constrain(target - hoverCmd, -maxStep, maxStep);
+
+    // Tilt compensation
+    throttle = hoverCmd / fmaxf(tiltCos, HOVER_MIN_TILT_COS);
+    throttle = constrain(throttle, HOVER_THROTTLE_MIN, MAX_THROTTLE);
+  } else {
+    throttle = stickThrottle;
+    if (throttle <= 0.05f) {
+      mixer.stopAllMotors();
+      return;
+    }
+    throttle = constrain(throttle, 0.0f, MAX_THROTTLE);
+  }
 
   float rollSetpoint = receiver.getRoll() * 30.0f;
   float pitchSetpoint = receiver.getPitch() * 30.0f;
