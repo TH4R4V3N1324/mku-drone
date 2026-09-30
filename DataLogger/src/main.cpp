@@ -10,6 +10,7 @@ void setup() {
   Wire.begin();
   Wire.setClock(400000); // Set I2C clock speed to 400kHz
   imu.init(0x68); // Initialize IMU with I2C address 0x68
+  imu.calibrate(); // Calibrate the IMU
 }
 
 void loop() {
