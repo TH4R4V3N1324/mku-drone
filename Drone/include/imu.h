@@ -30,6 +30,7 @@ public:
 		gyroOffsetZ(0.0f),
         accelPitchOffset(0.0f),
         accelRollOffset(0.0f),
+        accelZOffset(0.0f),
 		filteredGyroX(0.0f),
 		filteredGyroY(0.0f),
 		filteredGyroZ(0.0f),
@@ -110,6 +111,7 @@ private:
     float gyroOffsetZ;
     float accelPitchOffset;
     float accelRollOffset;
+    float accelZOffset;
     float filteredGyroX;
     float filteredGyroY;
     float filteredGyroZ;
