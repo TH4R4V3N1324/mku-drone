@@ -30,7 +30,9 @@ constexpr uint8_t throttlePin = 9;
 constexpr uint8_t rollPin = 11;
 constexpr uint8_t pitchPin = 10;
 constexpr uint8_t yawPin = 8;
-Receiver receiver(throttlePin, rollPin, pitchPin, yawPin);
+constexpr uint8_t aux1Pin = 12;
+constexpr uint8_t aux2Pin = 13;
+Receiver receiver(throttlePin, rollPin, pitchPin, yawPin, aux1Pin, aux2Pin);
 
 PID rollPID(0.02, 0.0, 0.0, -0.3, 0.3); // PID controller for roll
 PID pitchPID(0.02, 0.0, 0.0, -0.3, 0.3); // PID controller for pitch

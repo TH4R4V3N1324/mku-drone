@@ -19,6 +19,8 @@ This is a development prototype, not flight-ready software. Keep propellers remo
 | Roll | 11 |
 | Pitch | 10 |
 | Yaw | 8 |
+| AUX1 | 12 |
+| AUX2 | 13 |
 
 ### Motor outputs
 

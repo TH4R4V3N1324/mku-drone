@@ -12,21 +12,27 @@ Receiver* activeReceiver = nullptr;
  * @param[in] rollPin The pin for the roll channel
  * @param[in] pitchPin The pin for the pitch channel
  * @param[in] yawPin The pin for the yaw channel
+ * @param[in] aux1Pin The pin for the auxiliary channel 1
+ * @param[in] aux2Pin The pin for the auxiliary channel 2
  * @return None
  */
-Receiver::Receiver(uint8_t throttlePin, uint8_t rollPin, uint8_t pitchPin, uint8_t yawPin)
+Receiver::Receiver(uint8_t throttlePin, uint8_t rollPin, uint8_t pitchPin, uint8_t yawPin, uint8_t aux1Pin, uint8_t aux2Pin)
     : throttlePin(throttlePin),
       rollPin(rollPin),
       pitchPin(pitchPin),
       yawPin(yawPin),
+      aux1Pin(aux1Pin),
+      aux2Pin(aux2Pin),
       throttle(0.0f),
       roll(0.0f),
       pitch(0.0f),
-            yaw(0.0f),
-            pulseWidths{0, 0, 0, 0},
-            pulseStarts{0, 0, 0, 0},
-            lastPulseTimes{0, 0, 0, 0},
-            lastPortState(0) {}
+    yaw(0.0f),
+    aux1(0.0f),
+    aux2(0.0f),
+    pulseWidths{0, 0, 0, 0, 0, 0},
+    pulseStarts{0, 0, 0, 0, 0, 0},
+    lastPulseTimes{0, 0, 0, 0, 0, 0},
+    lastPortState(0) {}
 
 /**
  * @brief Initialize the receiver
@@ -39,10 +45,26 @@ void Receiver::init() {
     pinMode(pitchPin, INPUT);
     pinMode(yawPin, INPUT);
 
+    if (aux1Pin != NOT_A_PIN) {
+        pinMode(aux1Pin, INPUT);
+    }
+
+    if (aux2Pin != NOT_A_PIN) {
+        pinMode(aux2Pin, INPUT);
+    }
+
     activeReceiver = this;
-    lastPortState = PINB & 0x0F;
+    lastPortState = PINB & 0x3F;
     PCICR |= _BV(PCIE0);
-    PCMSK0 |= _BV(PCINT0) | _BV(PCINT1) | _BV(PCINT2) | _BV(PCINT3);
+    PCMSK0 = 0;
+    PCMSK0 |= _BV(throttlePin - 8) | _BV(rollPin - 8) |
+              _BV(pitchPin - 8) | _BV(yawPin - 8);
+    if (aux1Pin != NOT_A_PIN) {
+        PCMSK0 |= _BV(aux1Pin - 8);
+    }
+    if (aux2Pin != NOT_A_PIN) {
+        PCMSK0 |= _BV(aux2Pin - 8);
+    }
 }
 
 /**
@@ -51,11 +73,11 @@ void Receiver::init() {
  * @return None
  */
 void Receiver::readData() {
-    uint16_t pulseSnapshot[4];
-    unsigned long lastPulseSnapshot[4];
+    uint16_t pulseSnapshot[6];
+    unsigned long lastPulseSnapshot[6];
 
     noInterrupts();
-    for (uint8_t channel = 0; channel < 4; ++channel) {
+    for (uint8_t channel = 0; channel < 6; ++channel) {
         pulseSnapshot[channel] = pulseWidths[channel];
         lastPulseSnapshot[channel] = lastPulseTimes[channel];
     }
@@ -84,14 +106,32 @@ void Receiver::readData() {
     roll = rollValid ? readChannel(pulseSnapshot[rollChannel], -1.0f, 1.0f) : 0.0f;
     pitch = pitchValid ? -readChannel(pulseSnapshot[pitchChannel], -1.0f, 1.0f) : 0.0f;
     yaw = yawValid ? readChannel(pulseSnapshot[yawChannel], -1.0f, 1.0f) : 0.0f;
+
+    aux1 = 0.0f;
+    if (aux1Pin != NOT_A_PIN) {
+        const uint8_t aux1Channel = aux1Pin - 8;
+        const bool aux1Valid = now - lastPulseSnapshot[aux1Channel] <= 100000UL &&
+                               pulseSnapshot[aux1Channel] >= 900U &&
+                               pulseSnapshot[aux1Channel] <= 2100U;
+        aux1 = aux1Valid ? readChannel(pulseSnapshot[aux1Channel], 0.0f, 1.0f) : 0.0f;
+    }
+
+    aux2 = 0.0f;
+    if (aux2Pin != NOT_A_PIN) {
+        const uint8_t aux2Channel = aux2Pin - 8;
+        const bool aux2Valid = now - lastPulseSnapshot[aux2Channel] <= 100000UL &&
+                               pulseSnapshot[aux2Channel] >= 900U &&
+                               pulseSnapshot[aux2Channel] <= 2100U;
+        aux2 = aux2Valid ? readChannel(pulseSnapshot[aux2Channel], 0.0f, 1.0f) : 0.0f;
+    }
 }
 
 void Receiver::handlePinChangeInterrupt() {
-    const uint8_t portState = PINB & 0x0F;
+    const uint8_t portState = PINB & 0x3F;
     const uint8_t changedBits = portState ^ lastPortState;
     const unsigned long currentTime = micros();
 
-    for (uint8_t channel = 0; channel < 4; ++channel) {
+    for (uint8_t channel = 0; channel < 6; ++channel) {
         const uint8_t channelMask = _BV(channel);
         if ((changedBits & channelMask) == 0) {
             continue;
@@ -141,5 +181,7 @@ void Receiver::printData() const {
     Serial.print("Throttle: "); Serial.print(throttle);
     Serial.print(" | Roll: "); Serial.print(roll);
     Serial.print(" | Pitch: "); Serial.print(pitch);
-    Serial.print(" | Yaw: "); Serial.println(yaw);
+    Serial.print(" | Yaw: "); Serial.print(yaw);
+    Serial.print(" | AUX1: "); Serial.print(aux1);
+    Serial.print(" | AUX2: "); Serial.println(aux2);
 }
