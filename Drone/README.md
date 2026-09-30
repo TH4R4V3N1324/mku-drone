@@ -92,7 +92,7 @@ python -m pip install pyserial matplotlib
 python Tools/pid_tuner.py COM5
 ```
 
-Use the commands `axis r`, `axis p`, or `axis y` to select an axis, `p <value>`, `i <value>`, and `d <value>` to change gains, `reset` to clear controller state, and `show` to print the active gains. Replace `COM5` with the board's serial port.
+Use the commands `axis r`, `axis p`, `axis y`, or `axis h` to select roll, pitch, yaw, or hover tuning, `p <value>`, `i <value>`, and `d <value>` to change gains, `reset` to clear controller state, and `show` to print the active gains. Replace `COM5` with the board's serial port.
 
 ## Project structure
 

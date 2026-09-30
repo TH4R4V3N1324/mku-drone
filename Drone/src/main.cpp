@@ -60,7 +60,7 @@ PID altitudePID(0.1, 0.0, 0.0, -HOVER_CORRECTION_LIMIT, HOVER_CORRECTION_LIMIT);
 PID rollPID(0.02, 0.0, 0.0, -0.3, 0.3); // PID controller for roll
 PID pitchPID(0.02, 0.0, 0.0, -0.3, 0.3); // PID controller for pitch
 PID yawPID(0.05, 0.0, 0.0, -0.2, 0.2); // PID controller for yaw
-SerialTuner tuner(rollPID, pitchPID, yawPID);
+SerialTuner tuner(rollPID, pitchPID, yawPID, altitudePID);
 
 unsigned long previousLoopTime;
 
@@ -193,6 +193,10 @@ void run() {
       setpointToPrint = yawRateSetpoint;
       measuredToPrint = imu.getGyroZ();
       outputToPrint = yawOutput;
+    } else if (strcmp(axis, "hover") == 0) {
+      setpointToPrint = hoverSetpoint;
+      measuredToPrint = hoverMeasured;
+      outputToPrint = hoverCorrection;
     } else {
       setpointToPrint = 0.0f;
       measuredToPrint = 0.0f;

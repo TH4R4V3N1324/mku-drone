@@ -14,6 +14,7 @@
  *            axis r      -> select roll for tuning
  *            axis p      -> select pitch
  *            axis y      -> select yaw
+ *            axis h      -> select hover/altitude
  *            p 1.5       -> set kp = 1.5 on the selected axis
  *            i 0.04      -> set ki = 0.04
  *            d 18.0      -> set kd = 18.0
@@ -26,11 +27,12 @@ public:
      * @brief Construct a new SerialTuner object
      * @param[in] rollPID   Reference to the roll PID controller
      * @param[in] pitchPID  Reference to the pitch PID controller
-     * @param[in] yawPID    Reference to the yaw PID controller
+     * @param[in] yawPID     Reference to the yaw PID controller
+     * @param[in] hoverPID   Reference to the hover PID controller
      */
-    SerialTuner(PID &rollPID, PID &pitchPID, PID &yawPID)
-        : rollPID(rollPID), pitchPID(pitchPID), yawPID(yawPID),
-          active(&rollPID), activeName("roll") {}
+        SerialTuner(PID &rollPID, PID &pitchPID, PID &yawPID, PID &hoverPID)
+                : rollPID(rollPID), pitchPID(pitchPID), yawPID(yawPID), hoverPID(hoverPID),
+                    active(&rollPID), activeName("roll") {}
 
     /**
      * @brief Get the name of the axis currently selected for tuning
@@ -60,6 +62,7 @@ private:
     PID &rollPID;
     PID &pitchPID;
     PID &yawPID;
+    PID &hoverPID;
     PID *active;
     const char *activeName;
     String lineBuffer;
@@ -78,7 +81,8 @@ private:
             if (axis == 'r') { active = &rollPID; activeName = "roll"; }
             else if (axis == 'p') { active = &pitchPID; activeName = "pitch"; }
             else if (axis == 'y') { active = &yawPID; activeName = "yaw"; }
-            else { Serial.println(F("Unknown axis. Use: axis r | axis p | axis y")); return; }
+            else if (axis == 'h') { active = &hoverPID; activeName = "hover"; }
+            else { Serial.println(F("Unknown axis. Use: axis r | axis p | axis y | axis h")); return; }
             Serial.print(F("Active axis: "));
             Serial.println(activeName);
         }
@@ -103,7 +107,7 @@ private:
             printGains();
         }
         else {
-            Serial.println(F("Unknown command. Try: axis r/p/y | p <val> | i <val> | d <val> | reset | show"));
+            Serial.println(F("Unknown command. Try: axis r/p/y/h | p <val> | i <val> | d <val> | reset | show"));
         }
     }
 
