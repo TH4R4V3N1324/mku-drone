@@ -81,5 +81,5 @@ void loop() {
   flightLog.print(gyroY);
   flightLog.print(",");
   flightLog.println(gyroZ);
-
+  flightLog.flush(); // Ensure data is written to the SD card
 }
