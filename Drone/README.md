@@ -87,7 +87,7 @@ Hover mode is enabled with `AUX1` and uses `AUX2` to command vertical movement:
 - Set `AUX1` high while the drone is airborne, the throttle is above 20%, and estimated vertical speed remains below `0.3 m/s` for `0.5` seconds. The firmware captures the filtered throttle value as the hover throttle and resets the hover controller for a bumpless transition.
 - While active, `AUX2` commands a climb or descent rate from approximately `-1` to `+1 m/s`. A `0.1 m/s` deadband prevents small stick movements from causing corrections.
 - The hover controller adjusts throttle around the captured value, limits the correction to a band around that value, applies a slew rate, and compensates for roll and pitch tilt. Throttle remains constrained between the hover floor and `MAX_THROTTLE`.
-- Set `AUX1` low to leave hover mode and return to direct throttle control. Hover mode is also not an arm/disarm or receiver-loss failsafe.
+- Set `AUX1` low to leave hover mode and return to direct throttle control. The transition ramps from the current hover throttle toward the stick command; moving the stick to the low-throttle cutoff still stops the motors immediately. Hover mode is also not an arm/disarm or receiver-loss failsafe.
 
 Hover mode is experimental. The vertical-velocity estimate is derived from integrated accelerometer data with filtering and leakage, so drift and acceleration bias can affect altitude behavior. Test it with propellers removed first and be ready to disable `AUX1`.
 

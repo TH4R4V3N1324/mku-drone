@@ -38,6 +38,7 @@ constexpr float HOVER_CORRECTION_LIMIT = 0.25f;  // PID output range (+/-)
 constexpr float HOVER_BAND             = 0.25f;  // final throttle stays within hoverThrottle +/- this
 constexpr float HOVER_THROTTLE_MIN     = 0.15f;  // floor in hover (must be above the 0.05 motor cutoff)
 constexpr float HOVER_SLEW_RATE        = 0.3f;   // max throttle change per second
+constexpr float THROTTLE_HANDOFF_RATE  = 1.5f;   // max manual throttle handoff change per second
 constexpr float HOVER_MIN_TILT_COS     = 0.7f;   // limits tilt compensation to ~45 degrees
 constexpr float ENTRY_MAX_VZ           = 0.3f;   // m/s, must be below this to engage
 constexpr float ENTRY_HOLD_S           = 0.5f;   // seconds the conditions must hold
@@ -54,6 +55,8 @@ static float azFilt         = 0.0f;
 static float throttleFilt   = 0.0f;
 static float hoverThrottle  = 0.0f;
 static float hoverCmd       = 0.0f;
+static float handoffThrottle = 0.0f;
+static bool  throttleHandoff = false;
 static float steadyTime     = 0.0f;
 
 PID altitudePID(0.1, 0.0, 0.0, -HOVER_CORRECTION_LIMIT, HOVER_CORRECTION_LIMIT); // PID controller for altitude
@@ -122,6 +125,11 @@ void run() {
 
   // Hover entry / exit
   if (!hoverSwitch) {
+    if (hoverActive) {
+      handoffThrottle = hoverCmd / fmaxf(tiltCos, HOVER_MIN_TILT_COS);
+      handoffThrottle = constrain(handoffThrottle, HOVER_THROTTLE_MIN, MAX_THROTTLE);
+      throttleHandoff = true;
+    }
     hoverActive = false;
     steadyTime = 0.0f;
   } else if (!hoverActive) {
@@ -132,6 +140,7 @@ void run() {
       hoverActive   = true;
       hoverThrottle = throttleFilt;   // captured hover throttle
       hoverCmd      = hoverThrottle;  // start the slew limiter here (bumpless)
+      throttleHandoff = false;
       vz            = 0.0f;
       altitudePID.reset();
     }
@@ -162,10 +171,21 @@ void run() {
     throttle = hoverCmd / fmaxf(tiltCos, HOVER_MIN_TILT_COS);
     throttle = constrain(throttle, HOVER_THROTTLE_MIN, MAX_THROTTLE);
   } else {
-    throttle = stickThrottle;
-    if (throttle <= 0.05f) {
+    if (stickThrottle <= 0.05f) {
+      throttleHandoff = false;
       mixer.stopAllMotors();
       return;
+    }
+
+    if (throttleHandoff) {
+      float maxStep = THROTTLE_HANDOFF_RATE * dt;
+      handoffThrottle += constrain(stickThrottle - handoffThrottle, -maxStep, maxStep);
+      throttle = handoffThrottle;
+      if (fabsf(stickThrottle - handoffThrottle) <= maxStep) {
+        throttleHandoff = false;
+      }
+    } else {
+      throttle = stickThrottle;
     }
     throttle = constrain(throttle, 0.0f, MAX_THROTTLE);
   }
