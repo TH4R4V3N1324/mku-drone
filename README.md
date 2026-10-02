@@ -12,7 +12,9 @@ See [Drone/README.md](Drone/README.md) for wiring, firmware behavior, safety not
 
 ### `DataLogger`
 
-PlatformIO project targeting an Arduino Nano with the Arduino framework. It currently contains the default starter sketch and is reserved for future sensor or flight-data logging.
+PlatformIO project targeting an Arduino Nano with the Arduino framework. It reads an MPU-6050 and records calibrated IMU and orientation data to sequential CSV files on a microSD card.
+
+See [DataLogger/README.md](DataLogger/README.md) for wiring, logging behavior, CSV columns, and build instructions.
 
 ### `Tools`
 
@@ -41,12 +43,13 @@ pio run --target upload
 pio device monitor --baud 115200
 ```
 
-For the Nano starter project:
+For the DataLogger project:
 
 ```text
 cd DataLogger
 pio run
 pio run --target upload
+pio device monitor --baud 115200
 ```
 
 Choose the correct upload port in PlatformIO when it is not detected automatically. The Drone firmware uses `115200` baud for serial output.
