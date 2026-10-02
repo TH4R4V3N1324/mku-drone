@@ -9,6 +9,7 @@ File flightLog;
 
 const int chipSelect = 10;
 int flightNum = 0;
+unsigned long lastLogTime = 0;
 
 void setup() {
   // put your setup code here, to run once:
@@ -76,6 +77,8 @@ void setup() {
 
 void loop() {
   // put your main code here, to run repeatedly:
+  unsigned long loopStartTime = micros();
+
   imu.readData();
   
   unsigned long currentTime = millis();
@@ -110,5 +113,11 @@ void loop() {
   flightLog.print(gyroY);
   flightLog.print(",");
   flightLog.println(gyroZ);
-  flightLog.flush(); // Ensure data is written to the SD card
+
+  // Flush the log to the SD card
+  unsigned long time = millis();
+  if (time - lastLogTime >= 5000) {
+    flightLog.flush(); // Ensure data is written to the SD card
+    lastLogTime = time;
+  }
 }
