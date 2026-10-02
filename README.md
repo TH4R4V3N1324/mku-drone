@@ -6,7 +6,7 @@ This repository contains an experimental Arduino flight-controller project, a Pl
 
 ### `Drone`
 
-The active prototype flight controller targets an Arduino Uno. It reads an MPU-6050 and a four-channel PWM receiver, runs roll/pitch/yaw PID control, and drives four ESC outputs using a quad-X mixer.
+The active prototype flight controller targets an Arduino Uno. It reads an MPU-6050 and a six-channel PWM receiver, runs roll/pitch/yaw PID control, and drives four ESC outputs using a quad-X mixer. It also includes an experimental hover mode with vertical-velocity feedback, climb-rate control, throttle capture, and tilt compensation.
 
 See [Drone/README.md](Drone/README.md) for wiring, firmware behavior, safety notes, and PID-tuning instructions.
 

@@ -74,10 +74,22 @@ At startup the firmware initializes serial communication at `115200` baud, wakes
 The default loop runs the experimental PID control path. It:
 
 1. Reads the IMU and receiver.
-2. Stops all motors when throttle is at or below 5%.
-3. Converts receiver commands to roll, pitch, and yaw-rate setpoints.
-4. Computes roll, pitch, and yaw PID outputs.
-5. Mixes the commands and writes normalized `0.0-1.0` motor speeds.
+2. Estimates vertical velocity from filtered, tilt-compensated accelerometer data.
+3. Uses the throttle stick directly and stops all motors when throttle is at or below 5%, unless hover mode is active.
+4. Converts receiver commands to roll, pitch, and yaw-rate setpoints.
+5. Computes roll, pitch, yaw, and, when active, hover PID outputs.
+6. Mixes the commands and writes normalized `0.0-1.0` motor speeds.
+
+### Hover mode
+
+Hover mode is enabled with `AUX1` and uses `AUX2` to command vertical movement:
+
+- Set `AUX1` high while the drone is airborne, the throttle is above 20%, and estimated vertical speed remains below `0.3 m/s` for `0.5` seconds. The firmware captures the filtered throttle value as the hover throttle and resets the hover controller for a bumpless transition.
+- While active, `AUX2` commands a climb or descent rate from approximately `-1` to `+1 m/s`. A `0.1 m/s` deadband prevents small stick movements from causing corrections.
+- The hover controller adjusts throttle around the captured value, limits the correction to a band around that value, applies a slew rate, and compensates for roll and pitch tilt. Throttle remains constrained between the hover floor and `MAX_THROTTLE`.
+- Set `AUX1` low to leave hover mode and return to direct throttle control. Hover mode is also not an arm/disarm or receiver-loss failsafe.
+
+Hover mode is experimental. The vertical-velocity estimate is derived from integrated accelerometer data with filtering and leakage, so drift and acceleration bias can affect altitude behavior. Test it with propellers removed first and be ready to disable `AUX1`.
 
 Set `TUNE_PID` to `1` in `src/main.cpp` to enable live PID command handling and telemetry. The `test()` function is available for receiver and mixer checks without PID control; enable it in `loop()` only with propellers removed.
 
