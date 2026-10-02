@@ -39,6 +39,7 @@ void IMU::calibrate() {
     float sumGyroZ = 0.0f;
     float sumAccelPitch = 0.0f;
     float sumAccelRoll = 0.0f;
+    float sumAccelZ = 0.0f;
 
     for (int i = 0; i < numSamples; ++i) {
         Wire.beginTransmission(i2cAddress);
@@ -58,9 +59,10 @@ void IMU::calibrate() {
 
         float accelX = ax / ACCEL_SCALE;
         float accelY = ay / ACCEL_SCALE;
-        float accelZ = az / ACCEL_SCALE;
+        float accelZ = (az / ACCEL_SCALE) * GRAVITY;
         sumAccelPitch += atan2(accelY, accelZ) * 180.0f / PI;
         sumAccelRoll += atan2(-accelX, sqrt(accelY * accelY + accelZ * accelZ)) * 180.0f / PI;
+        sumAccelZ += accelZ;
         sumGyroX += gx / GYRO_SCALE;
         sumGyroY += gy / GYRO_SCALE;
         sumGyroZ += gz / GYRO_SCALE;
@@ -72,6 +74,7 @@ void IMU::calibrate() {
     gyroOffsetZ = sumGyroZ / numSamples;
     accelPitchOffset = sumAccelPitch / numSamples;
     accelRollOffset = sumAccelRoll / numSamples;
+    accelZOffset = (sumAccelZ / numSamples) - GRAVITY;
     pitch = 0.0f;
     roll = 0.0f;
     yaw = 0.0f;
@@ -102,7 +105,7 @@ void IMU::readData() {
 
     data.accelX = (ax / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
     data.accelY = (ay / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
-    data.accelZ = (az / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
+    data.accelZ = (az / ACCEL_SCALE) * GRAVITY - accelZOffset; // Convert to m/s^2 and remove stationary bias
     data.temperature = (temp / TEMP_SCALE) + TEMP_OFFSET; // Convert to degrees Celsius
     
     float rawGyroX = (gx / GYRO_SCALE) - gyroOffsetX;
