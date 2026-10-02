@@ -77,8 +77,6 @@ void setup() {
 
 void loop() {
   // put your main code here, to run repeatedly:
-  unsigned long loopStartTime = micros();
-
   imu.readData();
   
   unsigned long currentTime = millis();
