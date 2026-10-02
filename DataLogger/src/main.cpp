@@ -17,19 +17,48 @@ void setup() {
   Wire.setClock(400000); // Set I2C clock speed to 400kHz
   imu.init(0x68); // Initialize IMU with I2C address 0x68
   imu.calibrate(); // Calibrate the IMU
-  SD.begin();
+  SPI.begin();
+  pinMode(chipSelect, OUTPUT);
+  digitalWrite(chipSelect, HIGH);
+  if (!SD.begin(chipSelect)) {
+    Serial.println("SD card initialization failed on CS D10");
+    Serial.println("Expected SPI pins: MOSI D11, MISO D12, SCK D13");
+    while (true) {
+      delay(1000);
+    }
+  }
+  Serial.println("SD card initialized");
   
   File logNumFile;
   logNumFile = SD.open("logNum.txt", FILE_READ);
   if (logNumFile) {
     flightNum = logNumFile.parseInt()+1;
-    logNumFile.write(String(flightNum).c_str());
     logNumFile.close();
-  };
+  }
+
+  SD.remove("logNum.txt");
+  logNumFile = SD.open("logNum.txt", FILE_WRITE);
+  if (!logNumFile) {
+    Serial.println("Could not create logNum.txt");
+    while (true) {
+      delay(1000);
+    }
+  }
+  logNumFile.println(flightNum);
+  logNumFile.close();
   
 
-  String filename = "flightNumber_" + String(flightNum) + ".csv";
+  String filename = "Flight" + String(flightNum) + ".csv";
   flightLog = SD.open(filename.c_str(), FILE_WRITE);
+  if (!flightLog) {
+    Serial.print("Could not create ");
+    Serial.println(filename);
+    while (true) {
+      delay(1000);
+    }
+  }
+  Serial.print("Logging to ");
+  Serial.println(filename);
 
   //Creates headers for CSV file
   flightLog.print("Current Time ,");
@@ -41,7 +70,7 @@ void setup() {
   flightLog.print("Accel Z ,");
   flightLog.print("Gyro X ,");
   flightLog.print("Gyro Y ,");
-  flightLog.print("Gyro Z ,");
+  flightLog.println("Gyro Z ,");
   
 }
 
