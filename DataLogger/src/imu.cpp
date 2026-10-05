@@ -16,12 +16,12 @@ void IMU::init(int address) {
 
     Wire.beginTransmission(i2cAddress);
     Wire.write(0x1A); // Configuration register
-    Wire.write(0x03); // Set DLPF to 3 (44Hz)
+    Wire.write(0x00); // Disable DLPF for the highest bandwidth
     Wire.endTransmission(true);
 
     Wire.beginTransmission(i2cAddress);
     Wire.write(0x19); // Sample rate divider register
-    Wire.write(0x09); // Set sample rate to 100Hz
+    Wire.write(0x00); // 1 kHz internal sample rate
     Wire.endTransmission(true);
 
     lastReadTime = millis();
