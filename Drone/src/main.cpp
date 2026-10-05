@@ -75,12 +75,12 @@ void setup() {
   #else
     Wire.begin();
     Wire.setClock(400000); // Set I2C clock speed to 400kHz
-    mixer.beginAllMotors();
     imu.init();
     imu.calibrate();
     receiver.init();
-    mixer.stopAllMotors();
+    mixer.beginAllMotors();
     delay(2000);
+    mixer.stopAllMotors();
     previousLoopTime = micros();
   #endif
 }
