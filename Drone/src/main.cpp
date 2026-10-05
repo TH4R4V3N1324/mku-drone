@@ -66,6 +66,7 @@ PID yawPID(0.05, 0.0, 0.0, -0.2, 0.2); // PID controller for yaw
 SerialTuner tuner(rollPID, pitchPID, yawPID, altitudePID);
 
 unsigned long previousLoopTime;
+unsigned long lastTelemetryTime = 0;
 
 void setup() {
   Serial.begin(115200);
@@ -198,7 +199,8 @@ void run() {
   float pitchOutput = pitchPID.compute(pitchSetpoint, imu.getPitch(), dt);
   float yawOutput = yawPID.compute(yawRateSetpoint, imu.getGyroZ(), dt);
 
-  if (TUNE_PID) {
+  if (TUNE_PID && millis() - lastTelemetryTime >= 50) {
+    lastTelemetryTime = millis();
     const char* axis = tuner.getActiveAxisName();
     float setpointToPrint, measuredToPrint, outputToPrint;
     if (strcmp(axis, "roll") == 0) {
@@ -224,9 +226,9 @@ void run() {
     }
 
     //Plot with Teleplot to tune PID parameters
-    Serial.print(">Setpoint: "); Serial.println(setpointToPrint);
-    Serial.print(">Actual: "); Serial.println(measuredToPrint);
-    Serial.print(">Output: "); Serial.println(outputToPrint);
+    Serial.print(">Setpoint:"); Serial.println(setpointToPrint);
+    Serial.print(">Actual:"); Serial.println(measuredToPrint);
+    Serial.print(">Output:"); Serial.println(outputToPrint);
   }
 
   mixer.mixMotors(throttle, rollOutput, pitchOutput, yawOutput);
