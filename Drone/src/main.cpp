@@ -172,7 +172,15 @@ void run() {
     throttle = hoverCmd / fmaxf(tiltCos, HOVER_MIN_TILT_COS);
     throttle = constrain(throttle, HOVER_THROTTLE_MIN, MAX_THROTTLE);
   } else {
-    if (stickThrottle <= 0.05f) {
+    static bool throttleIdle = true;
+
+    if (throttleIdle) {
+      if (stickThrottle > 0.08f) throttleIdle = false;
+    } else {
+      if (stickThrottle <= 0.03f) throttleIdle = true;
+    }
+
+    if (throttleIdle) {
       throttleHandoff = false;
       mixer.stopAllMotors();
       return;
