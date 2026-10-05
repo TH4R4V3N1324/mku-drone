@@ -1,30 +1,55 @@
-# MKU Flight Controller Workspace
+# MKU Drone
 
-This repository contains an experimental Arduino flight-controller project, a PlatformIO starter project for future data logging, and a desktop utility for tuning PID gains over serial.
+Experimental Arduino flight-controller and flight-data-logging workspace.
+The repository contains the flight firmware, a standalone IMU logger, Python
+utilities for serial tuning and log conversion, and 3D-printable project
+models.
+
+This is development hardware and software, not a flight-ready product. Read
+the safety notes below before powering motors or ESCs.
 
 ## Projects
 
-### `Drone`
+### [Drone](Drone/README.md)
 
-The active prototype flight controller targets an Arduino Uno. It reads an MPU-6050 and a six-channel PWM receiver, runs roll/pitch/yaw PID control, and drives four ESC outputs using a quad-X mixer. It also includes an experimental hover mode with vertical-velocity feedback, climb-rate control, throttle capture, and tilt compensation.
+PlatformIO firmware for an Arduino Uno. The controller:
 
-See [Drone/README.md](Drone/README.md) for wiring, firmware behavior, safety notes, and PID-tuning instructions.
+- Reads an MPU-6050 over I2C and a six-channel PWM receiver.
+- Runs experimental roll, pitch, yaw-rate, and hover PID control.
+- Mixes the control outputs for four ESCs in an X configuration.
+- Supports serial PID tuning and Teleplot-compatible telemetry.
 
-### `DataLogger`
+The project README contains the complete pinout, ESC calibration procedure,
+control-loop details, known limitations, and tuning instructions.
 
-PlatformIO project targeting an Arduino Nano with the Arduino framework. It reads an MPU-6050 and records calibrated IMU and orientation data to sequential CSV files on a microSD card.
+### [DataLogger](DataLogger/README.md)
 
-See [DataLogger/README.md](DataLogger/README.md) for wiring, logging behavior, CSV columns, and build instructions.
+PlatformIO firmware for an Arduino Nano. It calibrates an MPU-6050 and writes
+fixed-size binary records to a microSD card as `FlightN.bin`. Each record is
+40 bytes and contains a timestamp, pitch/roll/yaw, acceleration, and gyro
+measurements.
 
-### `Tools`
+See the project README for the wiring table, binary format, SD-card behavior,
+and troubleshooting details.
 
-`Tools/pid_tuner.py` is a Python serial utility that plots Teleplot-compatible telemetry and sends runtime PID commands to the Drone firmware.
+### [Tools](Tools/)
+
+- [`pid_tuner.py`](Tools/pid_tuner.py) plots live Drone telemetry and sends PID
+  commands over the same serial connection.
+- [`bin_to_csv.py`](Tools/bin_to_csv.py) converts a DataLogger binary flight
+  log into a CSV file, including elapsed time and handling `micros()` rollover.
+
+### [Models](Models/)
+
+3D-printable covers, pads, propeller guards, and test-stand parts for the
+hardware.
 
 ## Requirements
 
-- [PlatformIO](https://platformio.org/), through the CLI or VS Code extension
-- Python 3 for the tuning utility
-- `pyserial` and `matplotlib` for live PID tuning
+- [PlatformIO](https://platformio.org/), either the CLI or the VS Code
+  extension.
+- Python 3 for the desktop tools.
+- `pyserial` and `matplotlib` for live PID tuning.
 
 Install the Python dependencies from the repository root:
 
@@ -32,9 +57,12 @@ Install the Python dependencies from the repository root:
 python -m pip install pyserial matplotlib
 ```
 
-## Build the firmware
+`bin_to_csv.py` uses only the Python standard library.
 
-Each firmware project has its own `platformio.ini`. Run PlatformIO from the corresponding project directory:
+## Build and upload
+
+Each firmware project has its own `platformio.ini`. Run PlatformIO from the
+project directory you want to build:
 
 ```text
 cd Drone
@@ -43,7 +71,7 @@ pio run --target upload
 pio device monitor --baud 115200
 ```
 
-For the DataLogger project:
+For the Nano data logger:
 
 ```text
 cd DataLogger
@@ -52,19 +80,89 @@ pio run --target upload
 pio device monitor --baud 115200
 ```
 
-Choose the correct upload port in PlatformIO when it is not detected automatically. The Drone firmware uses `115200` baud for serial output.
+PlatformIO normally detects the upload port. If it does not, select the port
+in the IDE or add an `upload_port` setting to the relevant
+`platformio.ini`.
+
+## Live PID tuning
+
+The Drone firmware can emit Teleplot-compatible telemetry and accept PID
+commands over the same serial connection. Enable `TUNE_PID` in
+`Drone/src/main.cpp`, upload the firmware, and then run the tuner from the
+repository root:
+
+```text
+python Tools/pid_tuner.py COM5
+```
+
+Replace `COM5` with the board's serial port. If no port is supplied, the tool
+lists available serial ports and prompts you to choose one. The default baud
+rate is `115200`; it can be changed with `--baud`:
+
+```text
+python Tools/pid_tuner.py COM5 --baud 115200 --window 300
+```
+
+The tuner plots the selected setpoint, measured value, and PID output while
+also forwarding commands typed at its prompt:
+
+| Command | Purpose |
+| --- | --- |
+| `axis r` | Select roll tuning |
+| `axis p` | Select pitch tuning |
+| `axis y` | Select yaw tuning |
+| `axis h` | Select hover tuning |
+| `p <value>` | Set proportional gain |
+| `i <value>` | Set integral gain |
+| `d <value>` | Set derivative gain |
+| `reset` | Clear controller state |
+| `show` | Print the active gains |
+| `quit` | Exit the tuner |
+
+PID tuning is experimental. Keep propellers removed while changing gains or
+testing the control loop.
+
+## Working with flight logs
+
+After stopping or powering down the DataLogger, copy a `FlightN.bin` file from
+the microSD card and convert it from the repository root:
+
+```text
+python Tools/bin_to_csv.py Flight3.bin
+```
+
+This writes `Flight3.csv` beside the input file. To choose a different output
+path:
+
+```text
+python Tools/bin_to_csv.py Flight3.bin analysis\flight3.csv
+```
+
+The logger flushes its buffer every five seconds. Do not remove the SD card
+while the logger is running, or the final buffered records may be lost.
 
 ## Safety
 
-The Drone project is experimental and is not flight-ready. Remove propellers for all setup, wiring, receiver, IMU, ESC, PID, and failsafe tests. Use an appropriate external power source for the ESCs and motors, and never power the motors from an Arduino 5 V pin.
+The Drone firmware is experimental and has not been flight-validated.
+
+- Remove all propellers during setup, wiring, calibration, receiver, IMU,
+  ESC, PID, and failsafe testing.
+- Keep motors away from people and use a secure test stand where appropriate.
+- Power ESCs and motors from a suitable external supply; never power motors
+  from the Arduino 5 V pin.
+- Verify receiver channel order, IMU orientation, motor numbering, propeller
+  direction, ESC arming behavior, and minimum ESC pulses before any powered
+  test.
+- Treat hover mode as experimental. It is not an arm/disarm mechanism or a
+  receiver-loss failsafe.
 
 ## Repository layout
 
 ```text
 Drone/                  Arduino Uno flight-controller firmware
-DataLogger/             Arduino Nano logging project starter
-Tools/pid_tuner.py      Live serial PID tuner and plotter
-Models/                 Reserved for models and supporting assets
+DataLogger/             Arduino Nano binary IMU logger
+Tools/                  Python tuning and log-conversion utilities
+Models/                 3D-printable hardware models
 ```
 
 No project license has been specified yet.
