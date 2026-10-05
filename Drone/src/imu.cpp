@@ -21,7 +21,7 @@ void IMU::init(int address) {
 
     Wire.beginTransmission(i2cAddress);
     Wire.write(0x19); // Sample rate divider register
-    Wire.write(0x09); // Set sample rate to 100Hz
+    Wire.write(0x00); // Set sample rate to 1kHz
     Wire.endTransmission(true);
 
     lastReadTime = millis();
