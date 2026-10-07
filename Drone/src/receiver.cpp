@@ -33,12 +33,9 @@ float applyDeadband(float value) {
  * @return None
  */
 Receiver::Receiver(uint8_t throttlePin, uint8_t rollPin, uint8_t pitchPin, uint8_t yawPin, uint8_t aux1Pin, uint8_t aux2Pin)
-    : throttlePin(throttlePin),
-      rollPin(rollPin),
-      pitchPin(pitchPin),
-      yawPin(yawPin),
-      aux1Pin(aux1Pin),
-      aux2Pin(aux2Pin),
+    : pins{throttlePin, rollPin, pitchPin, yawPin, aux1Pin, aux2Pin},
+      channelPorts{0, 0, 0, 0, 0, 0},
+      channelMasks{0, 0, 0, 0, 0, 0},
       throttle(0.0f),
       roll(0.0f),
       pitch(0.0f),
@@ -49,7 +46,7 @@ Receiver::Receiver(uint8_t throttlePin, uint8_t rollPin, uint8_t pitchPin, uint8
     pulseWidths{0, 0, 0, 0, 0, 0},
     pulseStarts{0, 0, 0, 0, 0, 0},
     lastPulseTimes{0, 0, 0, 0, 0, 0},
-    lastPortState(0) {}
+    lastPortStates{0, 0, 0} {}
 
 /**
  * @brief Initialize the receiver
@@ -57,30 +54,21 @@ Receiver::Receiver(uint8_t throttlePin, uint8_t rollPin, uint8_t pitchPin, uint8
  * @return None
  */
 void Receiver::init() {
-    pinMode(throttlePin, INPUT);
-    pinMode(rollPin, INPUT);
-    pinMode(pitchPin, INPUT);
-    pinMode(yawPin, INPUT);
-
-    if (aux1Pin != NOT_A_PIN) {
-        pinMode(aux1Pin, INPUT);
-    }
-
-    if (aux2Pin != NOT_A_PIN) {
-        pinMode(aux2Pin, INPUT);
-    }
-
     activeReceiver = this;
-    lastPortState = PINB & 0x3F;
-    PCICR |= _BV(PCIE0);
-    PCMSK0 = 0;
-    PCMSK0 |= _BV(throttlePin - 8) | _BV(rollPin - 8) |
-              _BV(pitchPin - 8) | _BV(yawPin - 8);
-    if (aux1Pin != NOT_A_PIN) {
-        PCMSK0 |= _BV(aux1Pin - 8);
-    }
-    if (aux2Pin != NOT_A_PIN) {
-        PCMSK0 |= _BV(aux2Pin - 8);
+    lastPortStates[0] = PINB;
+    lastPortStates[1] = PINC;
+    lastPortStates[2] = PIND;
+
+    for (uint8_t channel = 0; channel < CHANNEL_COUNT; ++channel) {
+        const uint8_t pin = pins[channel];
+        if (pin == NOT_A_PIN) {
+            continue;
+        }
+        pinMode(pin, INPUT);
+        channelPorts[channel] = digitalPinToPCICRbit(pin);
+        channelMasks[channel] = _BV(digitalPinToPCMSKbit(pin));
+        *digitalPinToPCMSK(pin) |= channelMasks[channel];
+        PCICR |= _BV(channelPorts[channel]);
     }
 }
 
@@ -90,11 +78,11 @@ void Receiver::init() {
  * @return None
  */
 void Receiver::readData() {
-    uint16_t pulseSnapshot[6];
-    unsigned long lastPulseSnapshot[6];
+    uint16_t pulseSnapshot[CHANNEL_COUNT];
+    unsigned long lastPulseSnapshot[CHANNEL_COUNT];
 
     noInterrupts();
-    for (uint8_t channel = 0; channel < 6; ++channel) {
+    for (uint8_t channel = 0; channel < CHANNEL_COUNT; ++channel) {
         pulseSnapshot[channel] = pulseWidths[channel];
         lastPulseSnapshot[channel] = lastPulseTimes[channel];
     }
@@ -103,12 +91,11 @@ void Receiver::readData() {
     const unsigned long now = micros();
 
     // Normalized channel value, or false (value 0) if the channel is unused, stale, or out of range
-    auto readPin = [&](uint8_t pin, float minimum, float maximum, float& value) -> bool {
+    auto readPin = [&](uint8_t channel, float minimum, float maximum, float& value) -> bool {
         value = 0.0f;
-        if (pin == NOT_A_PIN) {
+        if (channelMasks[channel] == 0) {
             return false;
         }
-        const uint8_t channel = pin - 8;
         const uint16_t pulse = pulseSnapshot[channel];
         if (now - lastPulseSnapshot[channel] > SIGNAL_TIMEOUT_US ||
             pulse < MIN_VALID_PULSE_US || pulse > MAX_VALID_PULSE_US) {
@@ -118,12 +105,12 @@ void Receiver::readData() {
         return true;
     };
 
-    signalValid = readPin(throttlePin, 0.0f, 1.0f, throttle);
-    readPin(rollPin, -1.0f, 1.0f, roll);
-    readPin(pitchPin, -1.0f, 1.0f, pitch);
-    readPin(yawPin, -1.0f, 1.0f, yaw);
-    readPin(aux1Pin, 0.0f, 1.0f, aux1);
-    readPin(aux2Pin, 0.0f, 1.0f, aux2);
+    signalValid = readPin(THROTTLE, 0.0f, 1.0f, throttle);
+    readPin(ROLL, -1.0f, 1.0f, roll);
+    readPin(PITCH, -1.0f, 1.0f, pitch);
+    readPin(YAW, -1.0f, 1.0f, yaw);
+    readPin(AUX1, 0.0f, 1.0f, aux1);
+    readPin(AUX2, 0.0f, 1.0f, aux2);
 
     throttle = applyDeadband(throttle);
     roll = applyDeadband(roll);
@@ -131,14 +118,18 @@ void Receiver::readData() {
     yaw = applyDeadband(yaw);
 }
 
-void Receiver::handlePinChangeInterrupt() {
-    const uint8_t portState = PINB & 0x3F;
-    const uint8_t changedBits = portState ^ lastPortState;
+/**
+ * @brief Time pulse edges on one port
+ * @param[in] port Pin-change group that fired (0 = PORTB, 1 = PORTC, 2 = PORTD)
+ * @param[in] portState Current PINx value of that port
+ */
+void Receiver::handlePinChangeInterrupt(uint8_t port, uint8_t portState) {
+    const uint8_t changedBits = portState ^ lastPortStates[port];
     const unsigned long currentTime = micros();
 
-    for (uint8_t channel = 0; channel < 6; ++channel) {
-        const uint8_t channelMask = _BV(channel);
-        if ((changedBits & channelMask) == 0) {
+    for (uint8_t channel = 0; channel < CHANNEL_COUNT; ++channel) {
+        const uint8_t channelMask = channelMasks[channel];
+        if (channelPorts[channel] != port || (changedBits & channelMask) == 0) {
             continue;
         }
 
@@ -150,7 +141,7 @@ void Receiver::handlePinChangeInterrupt() {
         }
     }
 
-    lastPortState = portState;
+    lastPortStates[port] = portState;
 }
 
 /**
@@ -169,7 +160,19 @@ float Receiver::readChannel(uint16_t pulseWidth, float minimum, float maximum) c
 
 ISR(PCINT0_vect) {
     if (activeReceiver != nullptr) {
-        activeReceiver->handlePinChangeInterrupt();
+        activeReceiver->handlePinChangeInterrupt(0, PINB);
+    }
+}
+
+ISR(PCINT1_vect) {
+    if (activeReceiver != nullptr) {
+        activeReceiver->handlePinChangeInterrupt(1, PINC);
+    }
+}
+
+ISR(PCINT2_vect) {
+    if (activeReceiver != nullptr) {
+        activeReceiver->handlePinChangeInterrupt(2, PIND);
     }
 }
 
