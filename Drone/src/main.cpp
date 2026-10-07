@@ -78,8 +78,11 @@ void setup() {
   #else
     Wire.begin();
     Wire.setClock(400000); // Set I2C clock speed to 400kHz
+    Wire.setWireTimeout(3000, true); // Set I2C timeout to 3 seconds and reset on timeout
+
     imu.init();
     imu.calibrate();
+    
     receiver.init();
     esc.begin(motorPins); // Timer1 keeps sending min-throttle pulses from here on
     delay(2000);

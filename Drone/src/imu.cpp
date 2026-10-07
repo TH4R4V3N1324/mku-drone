@@ -101,7 +101,9 @@ void IMU::readData() {
     Wire.beginTransmission(i2cAddress);
     Wire.write(0x3B); // Starting register for accelerometer data
     Wire.endTransmission(false);
-    Wire.requestFrom(i2cAddress, 14, true); // Request 14 bytes of data
+    if (Wire.requestFrom(i2cAddress, 14, true) != 14) {
+        return;
+    } // Request 14 bytes of data
 
     int16_t ax = Wire.read() << 8 | Wire.read();
     int16_t ay = Wire.read() << 8 | Wire.read();
