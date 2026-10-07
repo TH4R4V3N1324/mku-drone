@@ -3,6 +3,11 @@
 
 #include <Arduino.h>
 
+/**
+ * @brief PWM receiver decoded with the PCINT0 pin-change interrupt
+ * @details All channel pins must be on PORTB (Arduino pins 8-13). Lost or
+ * out-of-range channels read as 0 (throttle off, sticks centred, switches low).
+ */
 class Receiver {
 public:
     Receiver(uint8_t throttlePin, uint8_t rollPin, uint8_t pitchPin, uint8_t yawPin, uint8_t aux1Pin = NOT_A_PIN, uint8_t aux2Pin = NOT_A_PIN);

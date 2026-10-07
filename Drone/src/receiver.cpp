@@ -3,6 +3,22 @@
 
 namespace {
 Receiver* activeReceiver = nullptr;
+
+constexpr unsigned long SIGNAL_TIMEOUT_US = 100000UL; // channel is lost if no pulse for 100 ms
+constexpr uint16_t MIN_VALID_PULSE_US = 900;
+constexpr uint16_t MAX_VALID_PULSE_US = 2100;
+constexpr float STICK_DEADBAND = 0.05f;
+
+/**
+ * @brief Zero small stick values and rescale the rest so output still starts at 0 and reaches +/-1
+ */
+float applyDeadband(float value) {
+    const float magnitude = fabsf(value);
+    if (magnitude <= STICK_DEADBAND) {
+        return 0.0f;
+    }
+    return copysignf((magnitude - STICK_DEADBAND) / (1.0f - STICK_DEADBAND), value);
+}
 }
 
 /**
@@ -85,57 +101,34 @@ void Receiver::readData() {
     interrupts();
 
     const unsigned long now = micros();
-    const uint8_t throttleChannel = throttlePin - 8;
-    const uint8_t rollChannel = rollPin - 8;
-    const uint8_t pitchChannel = pitchPin - 8;
-    const uint8_t yawChannel = yawPin - 8;
 
-    const bool throttleValid = now - lastPulseSnapshot[throttleChannel] <= 100000UL &&
-                               pulseSnapshot[throttleChannel] >= 900U &&
-                               pulseSnapshot[throttleChannel] <= 2100U;
-    const bool rollValid = now - lastPulseSnapshot[rollChannel] <= 100000UL &&
-                           pulseSnapshot[rollChannel] >= 900U &&
-                           pulseSnapshot[rollChannel] <= 2100U;
-    const bool pitchValid = now - lastPulseSnapshot[pitchChannel] <= 100000UL &&
-                            pulseSnapshot[pitchChannel] >= 900U &&
-                            pulseSnapshot[pitchChannel] <= 2100U;
-    const bool yawValid = now - lastPulseSnapshot[yawChannel] <= 100000UL &&
-                          pulseSnapshot[yawChannel] >= 900U &&
-                          pulseSnapshot[yawChannel] <= 2100U;
+    // Normalized channel value, or false (value 0) if the channel is unused, stale, or out of range
+    auto readPin = [&](uint8_t pin, float minimum, float maximum, float& value) -> bool {
+        value = 0.0f;
+        if (pin == NOT_A_PIN) {
+            return false;
+        }
+        const uint8_t channel = pin - 8;
+        const uint16_t pulse = pulseSnapshot[channel];
+        if (now - lastPulseSnapshot[channel] > SIGNAL_TIMEOUT_US ||
+            pulse < MIN_VALID_PULSE_US || pulse > MAX_VALID_PULSE_US) {
+            return false;
+        }
+        value = readChannel(pulse, minimum, maximum);
+        return true;
+    };
 
-    signalValid = throttleValid;
-    throttle = throttleValid ? readChannel(pulseSnapshot[throttleChannel], 0.0f, 1.0f) : 0.0f;
-    roll = rollValid ? readChannel(pulseSnapshot[rollChannel], -1.0f, 1.0f) : 0.0f;
-    pitch = pitchValid ? -readChannel(pulseSnapshot[pitchChannel], -1.0f, 1.0f) : 0.0f;
-    yaw = yawValid ? readChannel(pulseSnapshot[yawChannel], -1.0f, 1.0f) : 0.0f;
+    signalValid = readPin(throttlePin, 0.0f, 1.0f, throttle);
+    readPin(rollPin, -1.0f, 1.0f, roll);
+    readPin(pitchPin, -1.0f, 1.0f, pitch);
+    readPin(yawPin, -1.0f, 1.0f, yaw);
+    readPin(aux1Pin, 0.0f, 1.0f, aux1);
+    readPin(aux2Pin, 0.0f, 1.0f, aux2);
 
-    const float deadband = 0.05f;
-
-    if (throttle < deadband && throttle > -deadband) throttle = 0.0f;
-    if (roll < deadband && roll > -deadband) roll = 0.0f;
-    if (pitch < deadband && pitch > -deadband) pitch = 0.0f;
-    if (yaw < deadband && yaw > -deadband) yaw = 0.0f;
-
-    if (aux1 < deadband && aux1 > -deadband) aux1 = 0.0f;
-    if (aux2 < deadband && aux2 > -deadband) aux2 = 0.0f;
-
-    aux1 = 0.0f;
-    if (aux1Pin != NOT_A_PIN) {
-        const uint8_t aux1Channel = aux1Pin - 8;
-        const bool aux1Valid = now - lastPulseSnapshot[aux1Channel] <= 100000UL &&
-                               pulseSnapshot[aux1Channel] >= 900U &&
-                               pulseSnapshot[aux1Channel] <= 2100U;
-        aux1 = aux1Valid ? readChannel(pulseSnapshot[aux1Channel], 0.0f, 1.0f) : 0.0f;
-    }
-
-    aux2 = 0.0f;
-    if (aux2Pin != NOT_A_PIN) {
-        const uint8_t aux2Channel = aux2Pin - 8;
-        const bool aux2Valid = now - lastPulseSnapshot[aux2Channel] <= 100000UL &&
-                               pulseSnapshot[aux2Channel] >= 900U &&
-                               pulseSnapshot[aux2Channel] <= 2100U;
-        aux2 = aux2Valid ? readChannel(pulseSnapshot[aux2Channel], 0.0f, 1.0f) : 0.0f;
-    }
+    throttle = applyDeadband(throttle);
+    roll = applyDeadband(roll);
+    pitch = -applyDeadband(pitch);
+    yaw = applyDeadband(yaw);
 }
 
 void Receiver::handlePinChangeInterrupt() {
@@ -161,18 +154,14 @@ void Receiver::handlePinChangeInterrupt() {
 }
 
 /**
- * @brief Read a single channel from the receiver
- * @details Reads the pulse width of a single channel and converts it to a normalized value
+ * @brief Convert a validated pulse width to a normalized channel value
+ * @details Maps 1000-2000 us onto [minimum, maximum], clamping pulses slightly outside that range
  * @param[in] pulseWidth The captured receiver pulse width in microseconds
  * @param[in] minimum The minimum value for the channel
  * @param[in] maximum The maximum value for the channel
- * @return The normalized value of the channel, or minimum - 1.0f if the pulse width is out of range
+ * @return The normalized value of the channel
  */
 float Receiver::readChannel(uint16_t pulseWidth, float minimum, float maximum) const {
-    if (pulseWidth < 900UL || pulseWidth > 2100UL) {
-        return minimum - 1.0f;
-    }
-
     float value = (pulseWidth - 1000.0f) / 1000.0f;
     value = constrain(value, 0.0f, 1.0f);
     return minimum + value * (maximum - minimum);
