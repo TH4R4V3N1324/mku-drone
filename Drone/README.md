@@ -77,7 +77,7 @@ The default loop runs the experimental PID control path. It:
 2. Estimates vertical velocity from filtered, tilt-compensated accelerometer data.
 3. Uses the throttle stick directly and stops all motors when throttle is at or below 5%, unless hover mode is active.
 4. Converts receiver commands to roll, pitch, and yaw-rate setpoints.
-5. Computes roll, pitch, yaw, and, when active, hover PID outputs.
+5. Computes cascaded roll and pitch corrections (angle loop feeding a gyro rate loop), the yaw rate correction, and, when active, the hover PID output.
 6. Mixes the commands and writes normalized `0.0-1.0` motor speeds.
 
 ### Hover mode
@@ -104,7 +104,7 @@ python -m pip install pyserial matplotlib
 python Tools/pid_tuner.py COM5
 ```
 
-Use the commands `axis r`, `axis p`, `axis y`, or `axis h` to select roll, pitch, yaw, or hover tuning, `p <value>`, `i <value>`, and `d <value>` to change gains, `reset` to clear controller state, and `show` to print the active gains. Replace `COM5` with the board's serial port.
+Use the commands `axis rr` or `axis pr` to select the roll or pitch rate (inner) loop, `axis r` or `axis p` for the roll or pitch angle (outer) loop, and `axis y` or `axis h` for yaw rate or hover tuning. Tune the rate loops first. Use `p <value>`, `i <value>`, and `d <value>` to change gains, `reset` to clear controller state, and `show` to print the active gains. Replace `COM5` with the board's serial port.
 
 ## Project structure
 

@@ -10,11 +10,12 @@ public:
      * @param[in] kd         Derivative gain
      * @param[in] outputMin  Minimum output value (clamped)
      * @param[in] outputMax  Maximum output value (clamped)
+     * @param[in] dFilterHz  Low-pass cutoff for the derivative term only (0 = unfiltered)
      */
-    PID(float kp, float ki, float kd, float outputMin, float outputMax) : 
+    PID(float kp, float ki, float kd, float outputMin, float outputMax, float dFilterHz = 0.0f) :
         kp(kp), ki(ki), kd(kd),
-        outputMin(outputMin), outputMax(outputMax),
-        prevMeasured(0), integral(0), firstRun(true) {}
+        outputMin(outputMin), outputMax(outputMax), dFilterHz(dFilterHz),
+        prevMeasured(0), integral(0), filteredDerivative(0), firstRun(true) {}
 
     /**
      * @brief Compute the PID output
@@ -27,9 +28,9 @@ public:
         if (dt <= 0.0f) {
             return 0.0f; // bad timestep — don't poison integral/derivative
         }
- 
+
         float error = setpoint - measured;
- 
+
         //Integral with anti-windup clamp
         integral += error * dt;
         if (ki > 0.0f) {
@@ -37,25 +38,33 @@ public:
         } else {
             integral = 0.0f;
         }
- 
-        //Derivative on measurement (avoids setpoint-change kick)
+
+        //Derivative on measurement (avoids setpoint-change kick), optionally low-passed
         float derivative = 0.0f;
         if (!firstRun) {
-            derivative = -(measured - prevMeasured) / dt;
+            float rawDerivative = -(measured - prevMeasured) / dt;
+            if (dFilterHz > 0.0f) {
+                const float tau = 1.0f / (2.0f * PI * dFilterHz);
+                filteredDerivative += (dt / (tau + dt)) * (rawDerivative - filteredDerivative);
+                derivative = filteredDerivative;
+            } else {
+                derivative = rawDerivative;
+            }
         }
         prevMeasured = measured;
         firstRun = false;
- 
+
         float output = kp * error + ki * integral + kd * derivative;
         return constrain(output, outputMin, outputMax);
     }
- 
+
     /**
      * @brief Reset internal state (call when re-arming / switching modes)
      */
     void reset() {
         integral = 0.0f;
         prevMeasured = 0.0f;
+        filteredDerivative = 0.0f;
         firstRun = true;
     }
 
@@ -69,8 +78,10 @@ public:
 private:
     float kp, ki, kd;
     float outputMin, outputMax;
-    float prevMeasured; 
+    float dFilterHz;
+    float prevMeasured;
     float integral;
+    float filteredDerivative;
     bool firstRun = true;
 };
 

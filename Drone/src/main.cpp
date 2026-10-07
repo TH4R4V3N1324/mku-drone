@@ -8,7 +8,7 @@
 #include "receiver.h"
 #include "serialTuner.h"
 
-#define TUNE_PID 0        // Set to 1 to enable PID tuning via serial commands
+#define TUNE_PID 1        // Set to 1 to enable PID tuning via serial commands
 #define CALIBRATE_ESCS 0  // Set to 1 to calibrate ESCs on startup (ensure props are removed) 
 
 constexpr float MAX_THROTTLE = 0.85f; // 1850 us, leaving correction headroom
@@ -36,6 +36,10 @@ Receiver receiver(throttlePin, rollPin, pitchPin, yawPin, aux1Pin, aux2Pin);
 constexpr float ROLL_CORRECTION_LIMIT  = 0.3f;   // PID output range (+/-)
 constexpr float PITCH_CORRECTION_LIMIT = 0.3f;   // PID output range (+/-)
 constexpr float YAW_CORRECTION_LIMIT   = 0.2f;   // PID output range (+/-)
+constexpr float MAX_TILT_ANGLE         = 30.0f;  // deg, full stick roll/pitch
+constexpr float MAX_TILT_RATE          = 200.0f; // deg/s, outer angle loop output limit
+constexpr float MAX_YAW_RATE           = 180.0f; // deg/s, full stick yaw
+constexpr float RATE_D_FILTER_HZ       = 30.0f;  // low-pass on the rate loops' D term only
 
 constexpr float HOVER_CORRECTION_LIMIT = 0.25f;  // PID output range (+/-)
 constexpr float HOVER_BAND             = 0.25f;  // final throttle stays within hoverThrottle +/- this
@@ -63,10 +67,14 @@ static bool  throttleHandoff = false;
 static float steadyTime     = 0.0f;
 
 PID altitudePID(0.1, 0.0, 0.0, -HOVER_CORRECTION_LIMIT, HOVER_CORRECTION_LIMIT); // PID controller for altitude
-PID rollPID(0.02, 0.0, 0.0, -0.3, 0.3); // PID controller for roll
-PID pitchPID(0.02, 0.0, 0.0, -0.3, 0.3); // PID controller for pitch
-PID yawPID(0.05, 0.0, 0.0, -0.2, 0.2); // PID controller for yaw
-SerialTuner tuner(rollPID, pitchPID, yawPID, altitudePID);
+// Cascaded attitude control: angle error (deg) -> outer P -> rate setpoint (deg/s) -> inner PID on gyro -> motor correction.
+// Starting gains are equivalent to the previous single-loop roll/pitch PID (P 0.0038, I 0.0018, D 0.0006): outer P = Kp/Kd, inner P = Kd, inner I = Ki / outer P.
+PID rollAnglePID(3.0 , 0.0, 0.0, -MAX_TILT_RATE, MAX_TILT_RATE); // outer loop: roll angle -> roll rate setpoint
+PID pitchAnglePID(3.0, 0.0, 0.0, -MAX_TILT_RATE, MAX_TILT_RATE); // outer loop: pitch angle -> pitch rate setpoint
+PID rollRatePID(0.0045, 0.0008, 0.00002, -ROLL_CORRECTION_LIMIT, ROLL_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // inner loop: roll rate
+PID pitchRatePID(0.0045, 0.0008, 0.00002, -PITCH_CORRECTION_LIMIT, PITCH_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // inner loop: pitch rate
+PID yawPID(0.0, 0.0, 0.0, -YAW_CORRECTION_LIMIT, YAW_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // yaw rate
+SerialTuner tuner(rollAnglePID, rollRatePID, pitchAnglePID, pitchRatePID, yawPID, altitudePID);
 
 unsigned long previousLoopTime;
 unsigned long lastTelemetryTime = 0;
@@ -183,8 +191,10 @@ void run() {
 
     if (throttleIdle) {
       if (stickThrottle > 0.08f) {
-        pitchPID.reset();
-        rollPID.reset();
+        rollAnglePID.reset();
+        pitchAnglePID.reset();
+        rollRatePID.reset();
+        pitchRatePID.reset();
         yawPID.reset();
         altitudePID.reset();
         throttleIdle = false;
@@ -212,12 +222,17 @@ void run() {
     throttle = constrain(throttle, 0.0f, MAX_THROTTLE);
   }
 
-  float rollSetpoint = receiver.getRoll() * 30.0f;
-  float pitchSetpoint = receiver.getPitch() * 30.0f;
-  float yawRateSetpoint = receiver.getYaw() * 180.0f;
+  float rollSetpoint = receiver.getRoll() * MAX_TILT_ANGLE;
+  float pitchSetpoint = receiver.getPitch() * MAX_TILT_ANGLE;
+  float yawRateSetpoint = receiver.getYaw() * MAX_YAW_RATE;
 
-  float rollOutput = rollPID.compute(rollSetpoint, imu.getRoll(), dt);
-  float pitchOutput = pitchPID.compute(pitchSetpoint, imu.getPitch(), dt);
+  // Outer loop: angle error -> desired rotation rate
+  float rollRateSetpoint = rollAnglePID.compute(rollSetpoint, imu.getRoll(), dt);
+  float pitchRateSetpoint = pitchAnglePID.compute(pitchSetpoint, imu.getPitch(), dt);
+
+  // Inner loop: track the rate with the gyro directly (roll integrates gyro Y, pitch gyro X)
+  float rollOutput = rollRatePID.compute(rollRateSetpoint, imu.getGyroY(), dt);
+  float pitchOutput = pitchRatePID.compute(pitchRateSetpoint, imu.getGyroX(), dt);
   float yawOutput = yawPID.compute(yawRateSetpoint, imu.getGyroZ(), dt);
 
   if (TUNE_PID && millis() - lastTelemetryTime >= 50) {
@@ -227,10 +242,18 @@ void run() {
     if (strcmp(axis, "roll") == 0) {
       setpointToPrint = rollSetpoint;
       measuredToPrint = imu.getRoll();
+      outputToPrint = rollRateSetpoint;
+    } else if (strcmp(axis, "rollrate") == 0) {
+      setpointToPrint = rollRateSetpoint;
+      measuredToPrint = imu.getGyroY();
       outputToPrint = rollOutput;
     } else if (strcmp(axis, "pitch") == 0) {
       setpointToPrint = pitchSetpoint;
       measuredToPrint = imu.getPitch();
+      outputToPrint = pitchRateSetpoint;
+    } else if (strcmp(axis, "pitchrate") == 0) {
+      setpointToPrint = pitchRateSetpoint;
+      measuredToPrint = imu.getGyroX();
       outputToPrint = pitchOutput;
     } else if (strcmp(axis, "yaw") == 0) {
       setpointToPrint = yawRateSetpoint;
