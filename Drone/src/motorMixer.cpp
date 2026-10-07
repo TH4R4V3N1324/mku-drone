@@ -2,7 +2,8 @@
 
 /**
  * @brief Mix the control signals to determine the motor speeds
- * @details Mixes the throttle, roll, pitch, and yaw signals to determine the speed of each motor
+ * @details Mixes the throttle, roll, pitch, and yaw signals to determine the speed of each motor.
+ * Each motor is held at or above MOTOR_IDLE_SPEED so none stops while armed.
  * @param[in] throttle The throttle input (0.0 to 1.0)
  * @param[in] roll The roll input (0.0 to 1.0)
  * @param[in] pitch The pitch input (0.0 to 1.0)
@@ -12,10 +13,10 @@
 void MotorMixer::mixMotors(float throttle, float roll, float pitch, float yaw) {
     // Simple mixing algorithm for a quadcopter in X configuration
     const uint16_t pulses[ESC_COUNT] = {
-        speedToPulse(throttle + roll + pitch + yaw), // Front Left
-        speedToPulse(throttle - roll + pitch - yaw), // Front Right
-        speedToPulse(throttle - roll - pitch + yaw), // Rear Right
-        speedToPulse(throttle + roll - pitch - yaw), // Rear Left
+        speedToPulse(fmaxf(throttle + roll + pitch + yaw, MOTOR_IDLE_SPEED)), // Front Left
+        speedToPulse(fmaxf(throttle - roll + pitch - yaw, MOTOR_IDLE_SPEED)), // Front Right
+        speedToPulse(fmaxf(throttle - roll - pitch + yaw, MOTOR_IDLE_SPEED)), // Rear Right
+        speedToPulse(fmaxf(throttle + roll - pitch - yaw, MOTOR_IDLE_SPEED)), // Rear Left
     };
     esc.write(pulses);
 }
