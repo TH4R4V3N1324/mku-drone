@@ -14,13 +14,16 @@ the safety notes below before powering motors or ESCs.
 
 PlatformIO firmware for an Arduino Uno. The controller:
 
-- Reads an MPU-6050 over I2C and a six-channel PWM receiver.
-- Runs experimental roll, pitch, yaw-rate, and hover PID control.
+- Reads an MPU-6050 over I2C, a PMW3901 optical flow sensor over SPI, and a
+  six-channel PWM receiver.
+- Runs experimental roll, pitch, yaw-rate, and hover PID control, plus optical
+  flow drift hold.
 - Mixes the control outputs for four ESCs in an X configuration.
 - Supports serial PID tuning and Teleplot-compatible telemetry.
 
 The project README contains the complete pinout, ESC calibration procedure,
-control-loop details, known limitations, and tuning instructions.
+optical flow check, control-loop details, known limitations, and tuning
+instructions.
 
 ### [DataLogger](DataLogger/README.md)
 
@@ -112,6 +115,8 @@ also forwarding commands typed at its prompt:
 | `axis p` | Select pitch tuning |
 | `axis y` | Select yaw tuning |
 | `axis h` | Select hover tuning |
+| `axis dr` | Select roll drift hold tuning |
+| `axis dp` | Select pitch drift hold tuning |
 | `p <value>` | Set proportional gain |
 | `i <value>` | Set integral gain |
 | `d <value>` | Set derivative gain |
@@ -155,6 +160,8 @@ The Drone firmware is experimental and has not been flight-validated.
   test.
 - Treat hover mode as experimental. It is not an arm/disarm mechanism or a
   receiver-loss failsafe.
+- Run the optical flow check before flying with drift hold. A wrong sensor
+  orientation makes it push the drone further in the direction it is drifting.
 
 ## Repository layout
 
