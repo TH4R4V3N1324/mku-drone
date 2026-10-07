@@ -38,45 +38,120 @@ void IMU::init(int address) {
 }
 
 /**
- * @brief Calibrate the IMU
- * @details Averages stationary samples to find gyro bias, level accelerometer angles, and Z-axis bias.
- * The drone must be still and on the surface that should read as level.
- * @return True on success, false if an I2C read failed (offsets are left unchanged)
+ * @brief Average raw samples while checking that the drone stays still
+ * @param[in] numSamples Number of samples to average (about 1.5 ms each)
+ * @param[out] result Mean raw gyro rates, accelerometer angles and Z acceleration, plus the gyro spread
+ * @return True on success, false if an I2C read failed
  */
-bool IMU::calibrate() {
-    const int numSamples = 2000;
-    float sumGyroX = 0.0f;
-    float sumGyroY = 0.0f;
-    float sumGyroZ = 0.0f;
-    float sumAccelPitch = 0.0f;
-    float sumAccelRoll = 0.0f;
-    float sumAccelZ = 0.0f;
+bool IMU::sampleStill(uint16_t numSamples, StillSample& result) {
+    float sumGyroX = 0.0f, sumGyroY = 0.0f, sumGyroZ = 0.0f;
+    float sumAccelPitch = 0.0f, sumAccelRoll = 0.0f, sumAccelZ = 0.0f;
+    float minGyro[3] = {1e6f, 1e6f, 1e6f};
+    float maxGyro[3] = {-1e6f, -1e6f, -1e6f};
 
-    for (int i = 0; i < numSamples; ++i) {
+    for (uint16_t i = 0; i < numSamples; ++i) {
         RawSample raw;
         if (!readRaw(raw)) {
             return false;
         }
+
+        const float gyro[3] = {raw.gx / GYRO_SCALE, raw.gy / GYRO_SCALE, raw.gz / GYRO_SCALE};
+        for (uint8_t axis = 0; axis < 3; ++axis) {
+            minGyro[axis] = fminf(minGyro[axis], gyro[axis]);
+            maxGyro[axis] = fmaxf(maxGyro[axis], gyro[axis]);
+        }
+        sumGyroX += gyro[0];
+        sumGyroY += gyro[1];
+        sumGyroZ += gyro[2];
 
         float accelPitch, accelRoll;
         accelAngles(raw.ax / ACCEL_SCALE, raw.ay / ACCEL_SCALE, raw.az / ACCEL_SCALE, accelPitch, accelRoll);
         sumAccelPitch += accelPitch;
         sumAccelRoll += accelRoll;
         sumAccelZ += (raw.az / ACCEL_SCALE) * GRAVITY;
-        sumGyroX += raw.gx / GYRO_SCALE;
-        sumGyroY += raw.gy / GYRO_SCALE;
-        sumGyroZ += raw.gz / GYRO_SCALE;
-        delay(5);
+        delay(1);
     }
 
-    gyroOffsetX = sumGyroX / numSamples;
-    gyroOffsetY = sumGyroY / numSamples;
-    gyroOffsetZ = sumGyroZ / numSamples;
-    accelPitchOffset = sumAccelPitch / numSamples;
-    accelRollOffset = sumAccelRoll / numSamples;
-    accelZOffset = (sumAccelZ / numSamples) - GRAVITY;
-    pitch = 0.0f;
-    roll = 0.0f;
+    result.gyroX = sumGyroX / numSamples;
+    result.gyroY = sumGyroY / numSamples;
+    result.gyroZ = sumGyroZ / numSamples;
+    result.gyroRange = fmaxf(maxGyro[0] - minGyro[0], fmaxf(maxGyro[1] - minGyro[1], maxGyro[2] - minGyro[2]));
+    result.accelPitch = sumAccelPitch / numSamples;
+    result.accelRoll = sumAccelRoll / numSamples;
+    result.accelZ = sumAccelZ / numSamples;
+    return true;
+}
+
+/**
+ * @brief Measure the gyro bias, repeating until the drone is held still
+ * @details Run at every boot: gyro bias drifts with temperature. Tilt doesn't matter,
+ * so this works on uneven ground.
+ * @return True on success, false if an I2C read failed
+ */
+bool IMU::calibrateGyro() {
+    StillSample sample;
+    while (true) {
+        if (!sampleStill(GYRO_CAL_SAMPLES, sample)) {
+            return false;
+        }
+        if (sample.gyroRange <= STILL_GYRO_RANGE_DPS) {
+            break;
+        }
+        Serial.println(F("Movement detected during gyro calibration, retrying - keep the drone still."));
+    }
+
+    gyroOffsetX = sample.gyroX;
+    gyroOffsetY = sample.gyroY;
+    gyroOffsetZ = sample.gyroZ;
+    return true;
+}
+
+/**
+ * @brief Measure the accelerometer offsets that define level
+ * @details The frame must be level and still. Does not apply the result; see setLevelCalibration().
+ * @param[out] level The measured level offsets
+ * @param[in] numSamples Number of samples to average (about 1.5 ms each)
+ * @param[out] moved True if the drone moved during the measurement (result should be discarded)
+ * @return True on success, false if an I2C read failed
+ */
+bool IMU::measureLevel(LevelCalibration& level, uint16_t numSamples, bool& moved) {
+    StillSample sample;
+    if (!sampleStill(numSamples, sample)) {
+        return false;
+    }
+    moved = sample.gyroRange > STILL_GYRO_RANGE_DPS;
+    level.pitchOffset = sample.accelPitch;
+    level.rollOffset = sample.accelRoll;
+    level.accelZOffset = sample.accelZ - GRAVITY;
+    return true;
+}
+
+/**
+ * @brief Apply level offsets (from EEPROM or measureLevel())
+ * @param[in] level The level offsets to use
+ * @return None
+ */
+void IMU::setLevelCalibration(const LevelCalibration& level) {
+    accelPitchOffset = level.pitchOffset;
+    accelRollOffset = level.rollOffset;
+    accelZOffset = level.accelZOffset;
+}
+
+/**
+ * @brief Start the angle estimate from the current accelerometer reading
+ * @details Call after calibration so the complementary filter doesn't start at 0
+ * when the drone is sitting on a slope. Yaw is reset to 0.
+ * @return True on success, false if an I2C read failed
+ */
+bool IMU::resetOrientation() {
+    RawSample raw;
+    if (!readRaw(raw)) {
+        return false;
+    }
+    float accelPitch, accelRoll;
+    accelAngles(raw.ax / ACCEL_SCALE, raw.ay / ACCEL_SCALE, raw.az / ACCEL_SCALE, accelPitch, accelRoll);
+    pitch = accelPitch - accelPitchOffset;
+    roll = accelRoll - accelRollOffset;
     yaw = 0.0f;
     lastReadTime = micros();
     return true;

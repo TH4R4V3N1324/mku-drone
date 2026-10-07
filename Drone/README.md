@@ -54,22 +54,35 @@ Select the upload port in PlatformIO or add an `upload_port` setting to `platfor
 
 ## ESC calibration
 
-ESC calibration is built into the flight-controller firmware and is selected with the `CALIBRATE_ESCS` flag in `src/main.cpp`. When enabled, the firmware sends the same calibration signal to all four ESC outputs (Arduino pins `4-7`): maximum throttle for 6 seconds, followed by minimum throttle for 6 seconds. It then stops and does not enter the normal flight loop.
+ESC calibration is built into the flight-controller firmware and is selected with the `CALIBRATE_ESCS` flag in `src/main.cpp`. When enabled, the firmware sends the same calibration signal to all four ESC outputs (Arduino pins `4-7`): maximum throttle for 15 seconds, followed by minimum throttle for 10 seconds. It then stops and does not enter the normal flight loop.
 
 With propellers removed:
 
 1. Set `CALIBRATE_ESCS` to `1` in `src/main.cpp`.
 2. Upload the firmware with the ESCs ready to receive power, but with propellers removed.
 3. Power the Arduino and ESCs when prompted by the serial messages, then listen for the ESC confirmation tones.
-4. Wait through the 6-second maximum-throttle phase and the 6-second minimum-throttle phase.
+4. Wait through the 15-second maximum-throttle phase and the 10-second minimum-throttle phase.
 5. Power-cycle the ESCs after the firmware reports that calibration pulses are complete.
 6. Set `CALIBRATE_ESCS` back to `0` and upload the firmware again before flying.
 
 The calibration routine prints its progress at `115200` baud and intentionally halts after sending both pulse ranges. Keep the motors disconnected or the propellers removed, and use a common ground between the Arduino and ESC signal ground.
 
+## IMU level calibration
+
+"Level" is defined by accelerometer offsets that depend on how the IMU is mounted, so they are measured once and stored in EEPROM. The gyro bias drifts with temperature and is still measured at every boot.
+
+1. Set `CALIBRATE_IMU` to `1` in `src/main.cpp` and upload.
+2. Open the serial monitor at `115200` baud.
+3. Put a spirit level on the frame (not the table) and shim the drone until the frame is level.
+4. Follow the prompts: five rounds of about 6 seconds each. Between rounds, pick the drone up, tilt it around, and set it back down level, then send any key to start the next round. Rounds where the drone moved are repeated.
+5. The firmware prints each round, the average, and the spread between rounds. It only saves to EEPROM if all rounds agree within `0.3` degrees. A larger spread usually means a soft surface or a loose IMU mount.
+6. Set `CALIBRATE_IMU` back to `0` and upload again before flying.
+
+If it still drifts consistently in hover, adjust `ROLL_TRIM_DEG` and `PITCH_TRIM_DEG` in `src/main.cpp` in steps of about `0.5` degrees. Without position sensing (optical flow or GPS) some drift with air movement is expected.
+
 ## Firmware behavior
 
-At startup the firmware initializes serial communication at `115200` baud, wakes the MPU-6050, averages 100 stationary gyro samples for calibration, initializes the receiver, stops all motors, and waits two seconds.
+At startup the firmware initializes serial communication at `115200` baud, wakes the MPU-6050, measures the gyro bias (retrying until the drone is still), loads the level calibration from EEPROM, and seeds the angle estimate from the accelerometer. If no valid calibration is stored, it measures level at boot instead and prints a warning. It then initializes the receiver, starts the ESC output at minimum throttle, and waits two seconds. Arming requires a live receiver link and the throttle seen at minimum first.
 
 The default loop runs the experimental PID control path. It:
 
@@ -116,9 +129,11 @@ include/                 Public firmware headers
   pid.h                   PID controller
   receiver.h              PWM receiver interface
   serialTuner.h           Runtime PID tuning commands
+  calibrationStore.h      EEPROM storage for the IMU level calibration
 src/                     Firmware implementation
-  main.cpp                Setup, control loop, telemetry, and test loop
-  imu.cpp                 MPU-6050 reading and complementary filter
+  main.cpp                Setup, control loop, telemetry, calibration modes, and test loop
+  imu.cpp                 MPU-6050 reading, calibration, and complementary filter
+  calibrationStore.cpp    EEPROM load/save with checksum and validation
   escOutput.cpp           Timer1 ESC pulse generation
   motorMixer.cpp          Quad-X mixing
   receiver.cpp            Receiver pulse decoding

@@ -7,17 +7,27 @@
 #include "pid.h"
 #include "receiver.h"
 #include "serialTuner.h"
+#include "calibrationStore.h"
 
 #define TUNE_PID 0        // Set to 1 to enable PID tuning via serial commands
-#define CALIBRATE_ESCS 0  // Set to 1 to calibrate ESCs on startup (ensure props are removed) 
+#define CALIBRATE_ESCS 0  // Set to 1 to calibrate ESCs on startup (ensure props are removed)
+#define CALIBRATE_IMU 0   // Set to 1 to run the guided IMU level calibration and save it to EEPROM
+
+#if CALIBRATE_ESCS && CALIBRATE_IMU
+#error "Enable only one of CALIBRATE_ESCS and CALIBRATE_IMU"
+#endif
 
 constexpr float MAX_THROTTLE = 0.85f; // 1850 us, leaving correction headroom
 
 void run();
 void disarm();
 void test();
+[[noreturn]] void haltWithImuError();
 #if CALIBRATE_ESCS
 void calibrateEscs();
+#endif
+#if CALIBRATE_IMU
+void calibrateImuLevel();
 #endif
 
 // ESC signal pins: front left, front right, rear right, rear left (must be on PORTD)
@@ -41,6 +51,12 @@ constexpr float MAX_TILT_ANGLE         = 30.0f;  // deg, full stick roll/pitch
 constexpr float MAX_TILT_RATE          = 200.0f; // deg/s, outer angle loop output limit
 constexpr float MAX_YAW_RATE           = 180.0f; // deg/s, full stick yaw
 constexpr float RATE_D_FILTER_HZ       = 30.0f;  // low-pass on the rate loops' D term only
+
+// Fine level adjustment on top of the EEPROM calibration. If it drifts in hover, trim in
+// ~0.5 deg steps; positive values act like holding a little positive roll/pitch stick.
+constexpr float ROLL_TRIM_DEG          = 0.0f;
+constexpr float PITCH_TRIM_DEG         = 0.0f;
+constexpr uint16_t LEVEL_BOOT_SAMPLES  = 2000;   // fallback level measurement at boot if EEPROM is empty (~3 s)
 
 constexpr float HOVER_CORRECTION_LIMIT = 0.25f;  // PID output range (+/-)
 constexpr float HOVER_BAND             = 0.25f;  // final throttle stays within hoverThrottle +/- this
@@ -82,7 +98,7 @@ PID rollAnglePID(3.0 , 0.0, 0.0, -MAX_TILT_RATE, MAX_TILT_RATE); // outer loop: 
 PID pitchAnglePID(3.0, 0.0, 0.0, -MAX_TILT_RATE, MAX_TILT_RATE); // outer loop: pitch angle -> pitch rate setpoint
 PID rollRatePID(0.0045, 0.0008, 0.00002, -ROLL_CORRECTION_LIMIT, ROLL_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // inner loop: roll rate
 PID pitchRatePID(0.0045, 0.0008, 0.00002, -PITCH_CORRECTION_LIMIT, PITCH_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // inner loop: pitch rate
-PID yawPID(0.0, 0.0, 0.0, -YAW_CORRECTION_LIMIT, YAW_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // yaw rate
+PID yawPID(0.004, 0.002, 0.0, -YAW_CORRECTION_LIMIT, YAW_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // yaw rate
 SerialTuner tuner(rollAnglePID, rollRatePID, pitchAnglePID, pitchRatePID, yawPID, altitudePID);
 
 unsigned long previousLoopTime;
@@ -98,10 +114,35 @@ void setup() {
     Wire.setWireTimeout(3000, true); // Set I2C timeout to 3 ms (value is in us) and reset the bus on timeout
 
     imu.init();
-    if (!imu.calibrate()) {
-      // Never start the ESC output without valid IMU offsets; ESCs stay unarmed with no signal
-      Serial.println(F("IMU calibration failed (I2C error). Check wiring and power-cycle."));
-      while (true) {}
+    #if CALIBRATE_IMU
+      calibrateImuLevel(); // does not return
+    #endif
+
+    // Gyro bias drifts with temperature, so measure it every boot (works on uneven ground)
+    if (!imu.calibrateGyro()) {
+      haltWithImuError();
+    }
+
+    // Level offsets depend on how the IMU is mounted, so they come from EEPROM
+    IMU::LevelCalibration level;
+    if (loadLevelCalibration(level)) {
+      Serial.println(F("Loaded IMU level calibration from EEPROM."));
+    } else {
+      Serial.println(F("No saved IMU level calibration - measuring level now, keep the frame level."));
+      Serial.println(F("Run CALIBRATE_IMU once for an accurate, repeatable calibration."));
+      bool moved = true;
+      while (moved) {
+        if (!imu.measureLevel(level, LEVEL_BOOT_SAMPLES, moved)) {
+          haltWithImuError();
+        }
+        if (moved) {
+          Serial.println(F("Movement detected, retrying - keep the drone still."));
+        }
+      }
+    }
+    imu.setLevelCalibration(level);
+    if (!imu.resetOrientation()) {
+      haltWithImuError();
     }
 
     receiver.init();
@@ -250,8 +291,8 @@ void run() {
     throttle = constrain(throttle, 0.0f, MAX_THROTTLE);
   }
 
-  float rollSetpoint = receiver.getRoll() * MAX_TILT_ANGLE;
-  float pitchSetpoint = receiver.getPitch() * MAX_TILT_ANGLE;
+  float rollSetpoint = receiver.getRoll() * MAX_TILT_ANGLE + ROLL_TRIM_DEG;
+  float pitchSetpoint = receiver.getPitch() * MAX_TILT_ANGLE + PITCH_TRIM_DEG;
   float yawRateSetpoint = receiver.getYaw() * MAX_YAW_RATE;
 
   // Outer loop: angle error -> desired rotation rate
@@ -370,5 +411,112 @@ void calibrateEscs() {
   Serial.println(F("Calibration pulses sent. Halting — power-cycle to arm normally."));
   mixer.stopAllMotors();
   while (true) {}   // stop here on purpose, don't fall into run()
+}
+#endif
+
+/**
+ * @brief Report an IMU I2C failure and halt
+ * @details Called before the ESC output starts, so the ESCs stay unarmed with no signal.
+ * @return Never returns
+ */
+void haltWithImuError() {
+  Serial.println(F("IMU I2C error. Check wiring and power-cycle."));
+  while (true) {}
+}
+
+#if CALIBRATE_IMU
+/**
+ * @brief Block until a key is sent over Serial, then discard the rest of the line
+ * @return None
+ */
+static void waitForKey() {
+  while (Serial.available()) Serial.read();
+  while (!Serial.available()) {}
+  delay(50);
+  while (Serial.available()) Serial.read();
+}
+
+/**
+ * @brief Guided IMU level calibration, saved to EEPROM
+ * @details Measures level several times, with the drone picked up and set down between
+ * rounds, and only saves the average if the rounds agree. Rounds where the drone moved are
+ * repeated. Open the serial monitor at 115200 baud; ESCs receive no signal while this runs.
+ * @return Never returns
+ */
+void calibrateImuLevel() {
+  constexpr uint8_t ROUNDS = 5;
+  constexpr uint16_t SAMPLES_PER_ROUND = 4000; // ~6 s per round
+  constexpr float MAX_SPREAD_DEG = 0.3f;       // rounds must agree within this to be saved
+
+  Serial.println(F("IMU level calibration."));
+  Serial.println(F("Put a spirit level on the FRAME (not the table) and shim it level."));
+  Serial.println(F("Measuring gyro bias - keep it still..."));
+  if (!imu.calibrateGyro()) {
+    haltWithImuError();
+  }
+
+  IMU::LevelCalibration rounds[ROUNDS];
+  uint8_t round = 0;
+  while (round < ROUNDS) {
+    Serial.print(F("Round ")); Serial.print(round + 1); Serial.print('/'); Serial.print(ROUNDS);
+    Serial.println(F(": set the drone down level and still, then send any key."));
+    waitForKey();
+    Serial.println(F("Measuring - don't touch it..."));
+
+    bool moved;
+    if (!imu.measureLevel(rounds[round], SAMPLES_PER_ROUND, moved)) {
+      haltWithImuError();
+    }
+    if (moved) {
+      Serial.println(F("Movement detected - repeating this round."));
+      continue;
+    }
+
+    Serial.print(F("  pitch ")); Serial.print(rounds[round].pitchOffset, 3);
+    Serial.print(F(" deg | roll ")); Serial.print(rounds[round].rollOffset, 3);
+    Serial.print(F(" deg | accelZ offset ")); Serial.print(rounds[round].accelZOffset, 3);
+    Serial.println(F(" m/s^2"));
+    ++round;
+    if (round < ROUNDS) {
+      Serial.println(F("Pick it up, tilt it around, then set it back down level."));
+    }
+  }
+
+  IMU::LevelCalibration mean = {0.0f, 0.0f, 0.0f};
+  float minPitch = rounds[0].pitchOffset, maxPitch = minPitch;
+  float minRoll = rounds[0].rollOffset, maxRoll = minRoll;
+  for (uint8_t i = 0; i < ROUNDS; ++i) {
+    mean.pitchOffset += rounds[i].pitchOffset / ROUNDS;
+    mean.rollOffset += rounds[i].rollOffset / ROUNDS;
+    mean.accelZOffset += rounds[i].accelZOffset / ROUNDS;
+    minPitch = fminf(minPitch, rounds[i].pitchOffset);
+    maxPitch = fmaxf(maxPitch, rounds[i].pitchOffset);
+    minRoll = fminf(minRoll, rounds[i].rollOffset);
+    maxRoll = fmaxf(maxRoll, rounds[i].rollOffset);
+  }
+  const float pitchSpread = maxPitch - minPitch;
+  const float rollSpread = maxRoll - minRoll;
+
+  Serial.print(F("Average: pitch ")); Serial.print(mean.pitchOffset, 3);
+  Serial.print(F(" deg | roll ")); Serial.print(mean.rollOffset, 3);
+  Serial.print(F(" deg | accelZ offset ")); Serial.print(mean.accelZOffset, 3);
+  Serial.println(F(" m/s^2"));
+  Serial.print(F("Spread between rounds: pitch ")); Serial.print(pitchSpread, 3);
+  Serial.print(F(" deg | roll ")); Serial.print(rollSpread, 3);
+  Serial.println(F(" deg"));
+
+  if (pitchSpread > MAX_SPREAD_DEG || rollSpread > MAX_SPREAD_DEG) {
+    Serial.println(F("Rounds disagree - NOT saved. Check the surface is solid and the IMU mount isn't loose, then retry."));
+  } else {
+    saveLevelCalibration(mean);
+    IMU::LevelCalibration check;
+    if (loadLevelCalibration(check)) {
+      Serial.println(F("Saved to EEPROM and verified."));
+    } else {
+      Serial.println(F("Save FAILED verification - offsets out of range? Check the IMU mounting."));
+    }
+  }
+  Serial.println(F("Set CALIBRATE_IMU to 0 and re-upload to fly."));
+  while (true) {}
 }
 #endif
