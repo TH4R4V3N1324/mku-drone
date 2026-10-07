@@ -107,6 +107,16 @@ void Receiver::readData() {
     pitch = pitchValid ? -readChannel(pulseSnapshot[pitchChannel], -1.0f, 1.0f) : 0.0f;
     yaw = yawValid ? readChannel(pulseSnapshot[yawChannel], -1.0f, 1.0f) : 0.0f;
 
+    const float deadband = 0.05f;
+
+    if (throttle < deadband && throttle > -deadband) throttle = 0.0f;
+    if (roll < deadband && roll > -deadband) roll = 0.0f;
+    if (pitch < deadband && pitch > -deadband) pitch = 0.0f;
+    if (yaw < deadband && yaw > -deadband) yaw = 0.0f;
+
+    if (aux1 < deadband && aux1 > -deadband) aux1 = 0.0f;
+    if (aux2 < deadband && aux2 > -deadband) aux2 = 0.0f;
+
     aux1 = 0.0f;
     if (aux1Pin != NOT_A_PIN) {
         const uint8_t aux1Channel = aux1Pin - 8;
