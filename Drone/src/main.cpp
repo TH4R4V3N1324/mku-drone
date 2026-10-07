@@ -179,7 +179,13 @@ void run() {
     static bool throttleIdle = true;
 
     if (throttleIdle) {
-      if (stickThrottle > 0.08f) throttleIdle = false;
+      if (stickThrottle > 0.08f) {
+        pitchPID.reset();
+        rollPID.reset();
+        yawPID.reset();
+        altitudePID.reset();
+        throttleIdle = false;
+      }
     } else {
       if (stickThrottle <= 0.03f) throttleIdle = true;
     }
