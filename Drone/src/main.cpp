@@ -33,6 +33,10 @@ constexpr uint8_t aux1Pin     = 12;
 constexpr uint8_t aux2Pin     = 13;
 Receiver receiver(throttlePin, rollPin, pitchPin, yawPin, aux1Pin, aux2Pin);
 
+constexpr float ROLL_CORRECTION_LIMIT  = 0.3f;   // PID output range (+/-)
+constexpr float PITCH_CORRECTION_LIMIT = 0.3f;   // PID output range (+/-)
+constexpr float YAW_CORRECTION_LIMIT   = 0.2f;   // PID output range (+/-)
+
 constexpr float HOVER_CORRECTION_LIMIT = 0.25f;  // PID output range (+/-)
 constexpr float HOVER_BAND             = 0.25f;  // final throttle stays within hoverThrottle +/- this
 constexpr float HOVER_THROTTLE_MIN     = 0.15f;  // floor in hover (must be above the 0.05 motor cutoff)
