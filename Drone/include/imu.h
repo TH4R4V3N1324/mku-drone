@@ -32,7 +32,7 @@ public:
         accelZOffset(0.0f) {}
     void init(int address = IMU_ADDRESS);
     void calibrate();
-    void readData();
+    bool readData();
     void printData();
     void printOrientation();
     /**

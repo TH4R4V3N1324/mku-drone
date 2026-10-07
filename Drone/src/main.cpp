@@ -8,12 +8,13 @@
 #include "receiver.h"
 #include "serialTuner.h"
 
-#define TUNE_PID 1        // Set to 1 to enable PID tuning via serial commands
+#define TUNE_PID 0        // Set to 1 to enable PID tuning via serial commands
 #define CALIBRATE_ESCS 0  // Set to 1 to calibrate ESCs on startup (ensure props are removed) 
 
 constexpr float MAX_THROTTLE = 0.85f; // 1850 us, leaving correction headroom
 
 void run();
+void disarm();
 void test();
 #if CALIBRATE_ESCS
 void calibrateEscs();
@@ -66,6 +67,14 @@ static float handoffThrottle = 0.0f;
 static bool  throttleHandoff = false;
 static float steadyTime     = 0.0f;
 
+constexpr float   ARM_THROTTLE      = 0.08f; // stick above this arms (once unblocked)
+constexpr float   IDLE_THROTTLE     = 0.03f; // stick at/below this disarms and unblocks arming
+constexpr uint8_t IMU_FAIL_LIMIT    = 25;    // consecutive failed IMU reads (100 ms at 250 Hz) before disarming
+
+static bool    throttleIdle = true;  // motors stopped (disarmed)
+static bool    armBlocked   = true;  // must see a valid low throttle before arming (boot, signal loss, IMU failure)
+static uint8_t imuFailCount = 0;
+
 PID altitudePID(0.1, 0.0, 0.0, -HOVER_CORRECTION_LIMIT, HOVER_CORRECTION_LIMIT); // PID controller for altitude
 // Cascaded attitude control: angle error (deg) -> outer P -> rate setpoint (deg/s) -> inner PID on gyro -> motor correction.
 // Starting gains are equivalent to the previous single-loop roll/pitch PID (P 0.0038, I 0.0018, D 0.0006): outer P = Kp/Kd, inner P = Kd, inner I = Ki / outer P.
@@ -86,7 +95,7 @@ void setup() {
   #else
     Wire.begin();
     Wire.setClock(400000); // Set I2C clock speed to 400kHz
-    Wire.setWireTimeout(3000, true); // Set I2C timeout to 3 seconds and reset on timeout
+    Wire.setWireTimeout(3000, true); // Set I2C timeout to 3 ms (value is in us) and reset the bus on timeout
 
     imu.init();
     imu.calibrate();
@@ -117,8 +126,18 @@ void run() {
   previousLoopTime = now;
   if (dt <= 0.0f || dt > 0.1f) dt = 1.0f / ESC_UPDATE_RATE_HZ;
 
-  imu.readData();
   receiver.readData();
+
+  // Keep flying on the last sample through brief I2C glitches, but disarm if the IMU stays unreachable
+  if (imu.readData()) {
+    imuFailCount = 0;
+  } else if (imuFailCount < IMU_FAIL_LIMIT) {
+    ++imuFailCount;
+  }
+  if (imuFailCount >= IMU_FAIL_LIMIT) {
+    disarm();
+    return;
+  }
 
   float stickThrottle = receiver.getThrottle();
   bool hoverSwitch = receiver.getAux1() > 0.5f;
@@ -149,7 +168,7 @@ void run() {
     hoverActive = false;
     steadyTime = 0.0f;
   } else if (!hoverActive) {
-    bool steady = fabsf(vz) < ENTRY_MAX_VZ && throttleFilt > ENTRY_MIN_THROTTLE;
+    bool steady = !throttleIdle && fabsf(vz) < ENTRY_MAX_VZ && throttleFilt > ENTRY_MIN_THROTTLE; // never engage while disarmed
     steadyTime = steady ? steadyTime + dt : 0.0f;
 
     if (steadyTime >= ENTRY_HOLD_S) {
@@ -187,10 +206,15 @@ void run() {
     throttle = hoverCmd / fmaxf(tiltCos, HOVER_MIN_TILT_COS);
     throttle = constrain(throttle, HOVER_THROTTLE_MIN, MAX_THROTTLE);
   } else {
-    static bool throttleIdle = true;
-
     if (throttleIdle) {
-      if (stickThrottle > 0.08f) {
+      // Only arm after a live link has shown the throttle low, so booting or reconnecting with the stick up can't spin the motors
+      if (!receiver.hasSignal()) {
+        armBlocked = true;
+      } else if (stickThrottle <= IDLE_THROTTLE) {
+        armBlocked = false;
+      }
+
+      if (!armBlocked && stickThrottle > ARM_THROTTLE) {
         rollAnglePID.reset();
         pitchAnglePID.reset();
         rollRatePID.reset();
@@ -200,7 +224,7 @@ void run() {
         throttleIdle = false;
       }
     } else {
-      if (stickThrottle <= 0.03f) throttleIdle = true;
+      if (stickThrottle <= IDLE_THROTTLE) throttleIdle = true;
     }
 
     if (throttleIdle) {
@@ -276,6 +300,20 @@ void run() {
   }
 
   mixer.mixMotors(throttle, rollOutput, pitchOutput, yawOutput);
+}
+
+/**
+ * @brief Stop the motors and require a valid low throttle before arming again
+ * @details Also leaves hover mode so it can't re-engage until re-armed.
+ * @return None
+ */
+void disarm() {
+  hoverActive     = false;
+  throttleHandoff = false;
+  steadyTime      = 0.0f;
+  throttleIdle    = true;
+  armBlocked      = true;
+  mixer.stopAllMotors();
 }
 
 /**

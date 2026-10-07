@@ -29,6 +29,7 @@ Receiver::Receiver(uint8_t throttlePin, uint8_t rollPin, uint8_t pitchPin, uint8
     yaw(0.0f),
     aux1(0.0f),
     aux2(0.0f),
+    signalValid(false),
     pulseWidths{0, 0, 0, 0, 0, 0},
     pulseStarts{0, 0, 0, 0, 0, 0},
     lastPulseTimes{0, 0, 0, 0, 0, 0},
@@ -102,6 +103,7 @@ void Receiver::readData() {
                           pulseSnapshot[yawChannel] >= 900U &&
                           pulseSnapshot[yawChannel] <= 2100U;
 
+    signalValid = throttleValid;
     throttle = throttleValid ? readChannel(pulseSnapshot[throttleChannel], 0.0f, 1.0f) : 0.0f;
     roll = rollValid ? readChannel(pulseSnapshot[rollChannel], -1.0f, 1.0f) : 0.0f;
     pitch = pitchValid ? -readChannel(pulseSnapshot[pitchChannel], -1.0f, 1.0f) : 0.0f;

@@ -93,17 +93,16 @@ void IMU::calibrate() {
 
 /**
  * @brief Read data from the IMU
- * @details Reads accelerometer, gyroscope, and temperature data from the IMU and updates the internal state
- * @return None
+ * @details Reads accelerometer, gyroscope, and temperature data from the IMU and updates the internal state.
+ * On an I2C failure the previous data and orientation are left unchanged.
+ * @return True if a fresh sample was read, false on I2C failure
  */
-void IMU::readData() {
-    // Implementation for reading IMU data
+bool IMU::readData() {
     Wire.beginTransmission(i2cAddress);
     Wire.write(0x3B); // Starting register for accelerometer data
-    Wire.endTransmission(false);
-    if (Wire.requestFrom(i2cAddress, 14, true) != 14) {
-        return;
-    } // Request 14 bytes of data
+    if (Wire.endTransmission(false) != 0 || Wire.requestFrom(i2cAddress, 14, true) != 14) {
+        return false;
+    }
 
     int16_t ax = Wire.read() << 8 | Wire.read();
     int16_t ay = Wire.read() << 8 | Wire.read();
@@ -126,6 +125,7 @@ void IMU::readData() {
     float accelPitch, accelRoll;
     accelAngles(ax / ACCEL_SCALE, ay / ACCEL_SCALE, az / ACCEL_SCALE, accelPitch, accelRoll);
     calculateOrientation(accelPitch - accelPitchOffset, accelRoll - accelRollOffset);
+    return true;
 }
 
 /**
