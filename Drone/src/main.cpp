@@ -8,6 +8,7 @@
 #include "receiver.h"
 #include "serialTuner.h"
 #include "calibrationStore.h"
+#include "opticalFlow.h"
 
 #define TUNE_PID 0        // Set to 1 to enable PID tuning via serial commands
 #define CALIBRATE_ESCS 0  // Set to 1 to calibrate ESCs on startup (ensure props are removed)
@@ -36,13 +37,19 @@ EscOutput esc;
 MotorMixer mixer(esc);
 IMU imu;
 
-constexpr uint8_t throttlePin = 9;
-constexpr uint8_t rollPin     = 11;
-constexpr uint8_t pitchPin    = 10;
-constexpr uint8_t yawPin      = 8;
-constexpr uint8_t aux1Pin     = 12;
-constexpr uint8_t aux2Pin     = 13;
+// Receiver pins avoid D10-D13, which are the hardware SPI pins for the flow sensor
+constexpr uint8_t throttlePin = A0;
+constexpr uint8_t rollPin     = A1;
+constexpr uint8_t pitchPin    = A2;
+constexpr uint8_t yawPin      = A3;
+constexpr uint8_t aux1Pin     = 2;
+constexpr uint8_t aux2Pin     = 3;
 Receiver receiver(throttlePin, rollPin, pitchPin, yawPin, aux1Pin, aux2Pin);
+
+// PMW3901 on hardware SPI: SCK D13, MISO D12, MOSI D11. CS must be D10 so the SPI stays in master mode.
+constexpr uint8_t flowCsPin = 10;
+OpticalFlow opticalFlow;
+static bool flowAvailable = false;
 
 constexpr float ROLL_CORRECTION_LIMIT  = 0.3f;   // PID output range (+/-)
 constexpr float PITCH_CORRECTION_LIMIT = 0.3f;   // PID output range (+/-)
@@ -143,6 +150,13 @@ void setup() {
     imu.setLevelCalibration(level);
     if (!imu.resetOrientation()) {
       haltWithImuError();
+    }
+
+    // Flow is only used for drift hold, so fly without it rather than halting
+    SPI.begin();
+    flowAvailable = opticalFlow.init(flowCsPin);
+    if (!flowAvailable) {
+      Serial.println(F("Optical flow sensor not found - drift hold disabled. Check SPI wiring."));
     }
 
     receiver.init();
