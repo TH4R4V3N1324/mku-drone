@@ -17,6 +17,8 @@
  *            axis p      -> select pitch angle (outer loop)
  *            axis y      -> select yaw rate
  *            axis h      -> select hover/altitude
+ *            axis dr     -> select drift hold, roll axis (optical flow)
+ *            axis dp     -> select drift hold, pitch axis (optical flow)
  *            p 1.5       -> set kp = 1.5 on the selected axis
  *            i 0.04      -> set ki = 0.04
  *            d 18.0      -> set kd = 18.0
@@ -33,17 +35,20 @@ public:
      * @param[in] pitchRatePID   Reference to the pitch rate (inner) PID controller
      * @param[in] yawPID         Reference to the yaw rate PID controller
      * @param[in] hoverPID       Reference to the hover PID controller
+     * @param[in] driftRollPID   Reference to the drift hold roll PID controller
+     * @param[in] driftPitchPID  Reference to the drift hold pitch PID controller
      */
     SerialTuner(PID &rollAnglePID, PID &rollRatePID, PID &pitchAnglePID, PID &pitchRatePID,
-                PID &yawPID, PID &hoverPID)
+                PID &yawPID, PID &hoverPID, PID &driftRollPID, PID &driftPitchPID)
         : rollAnglePID(rollAnglePID), rollRatePID(rollRatePID),
           pitchAnglePID(pitchAnglePID), pitchRatePID(pitchRatePID),
           yawPID(yawPID), hoverPID(hoverPID),
+          driftRollPID(driftRollPID), driftPitchPID(driftPitchPID),
           active(&rollRatePID), activeName("rollrate") {}
 
     /**
      * @brief Get the name of the axis currently selected for tuning
-     * @return The name of the active axis ("roll", "rollrate", "pitch", "pitchrate", "yaw", or "hover")
+     * @return The name of the active axis ("roll", "rollrate", "pitch", "pitchrate", "yaw", "hover", "driftroll" or "driftpitch")
      */
     const char* getActiveAxisName() const { return activeName; }
 
@@ -72,6 +77,8 @@ private:
     PID &pitchRatePID;
     PID &yawPID;
     PID &hoverPID;
+    PID &driftRollPID;
+    PID &driftPitchPID;
     PID *active;
     const char *activeName;
     String lineBuffer;
@@ -94,7 +101,9 @@ private:
             else if (axis == "p") { active = &pitchAnglePID; activeName = "pitch"; }
             else if (axis == "y") { active = &yawPID; activeName = "yaw"; }
             else if (axis == "h") { active = &hoverPID; activeName = "hover"; }
-            else { Serial.println(F("Unknown axis. Use: axis rr | r | pr | p | y | h")); return; }
+            else if (axis == "dr") { active = &driftRollPID; activeName = "driftroll"; }
+            else if (axis == "dp") { active = &driftPitchPID; activeName = "driftpitch"; }
+            else { Serial.println(F("Unknown axis. Use: axis rr | r | pr | p | y | h | dr | dp")); return; }
             Serial.print(F("Active axis: "));
             Serial.println(activeName);
         }
@@ -119,7 +128,7 @@ private:
             printGains();
         }
         else {
-            Serial.println(F("Unknown command. Try: axis rr/r/pr/p/y/h | p <val> | i <val> | d <val> | reset | show"));
+            Serial.println(F("Unknown command. Try: axis rr/r/pr/p/y/h/dr/dp | p <val> | i <val> | d <val> | reset | show"));
         }
     }
 

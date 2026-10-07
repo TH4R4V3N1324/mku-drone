@@ -13,9 +13,10 @@
 #define TUNE_PID 0        // Set to 1 to enable PID tuning via serial commands
 #define CALIBRATE_ESCS 0  // Set to 1 to calibrate ESCs on startup (ensure props are removed)
 #define CALIBRATE_IMU 0   // Set to 1 to run the guided IMU level calibration and save it to EEPROM
+#define CHECK_FLOW 0      // Set to 1 to plot optical flow against the gyro to set its orientation and scale
 
-#if CALIBRATE_ESCS && CALIBRATE_IMU
-#error "Enable only one of CALIBRATE_ESCS and CALIBRATE_IMU"
+#if (CALIBRATE_ESCS + CALIBRATE_IMU + CHECK_FLOW) > 1
+#error "Enable only one of CALIBRATE_ESCS, CALIBRATE_IMU and CHECK_FLOW"
 #endif
 
 constexpr float MAX_THROTTLE = 0.85f; // 1850 us, leaving correction headroom
@@ -30,6 +31,10 @@ void calibrateEscs();
 #if CALIBRATE_IMU
 void calibrateImuLevel();
 #endif
+#if CHECK_FLOW
+void checkOpticalFlow();
+#endif
+bool updateFlowVelocity(float dt, float& sampleDt);
 
 // ESC signal pins: front left, front right, rear right, rear left (must be on PORTD)
 constexpr uint8_t motorPins[ESC_COUNT] = {4, 5, 6, 7};
@@ -90,6 +95,31 @@ static float handoffThrottle = 0.0f;
 static bool  throttleHandoff = false;
 static float steadyTime     = 0.0f;
 
+// Drift hold: when airborne, the flow sensor's ground drift is steered to zero by nudging the angle setpoints.
+// Flow is measured as ground speed / height (rad/s), so the loop is stronger the lower you hover:
+// tune it at the lowest height you'll hold. "Right"/"forward" are the directions positive roll/pitch stick fly.
+// Set the four FLOW_ mounting values with CHECK_FLOW before flying.
+constexpr float   FLOW_RAD_PER_COUNT       = 1.26e-3f; // flow angle per sensor count (ArduPilot's PMW3901 value; check it)
+constexpr bool    FLOW_SWAP_XY             = false;    // true if the sensor's Y axis points right
+constexpr float   FLOW_RIGHT_SIGN          = 1.0f;     // flip to -1 if right-hand flow comes out mirrored
+constexpr float   FLOW_FORWARD_SIGN        = 1.0f;     // flip to -1 if forward flow comes out mirrored
+constexpr uint8_t FLOW_READ_DIVIDER        = 5;        // read every 5th loop (50 Hz); the sensor makes ~120 frames/s
+constexpr float   FLOW_FILTER_HZ           = 5.0f;     // low-pass on the drift velocity
+constexpr float   DRIFT_CORRECTION_LIMIT   = 8.0f;     // deg, max tilt the drift hold may add
+constexpr float   DRIFT_MIN_THROTTLE       = 0.2f;     // filtered stick throttle above which we count as airborne
+
+static float   flowVelRight     = 0.0f; // rad/s, filtered, rotation removed
+static float   flowVelForward   = 0.0f;
+static float   flowRateRight    = 0.0f; // rad/s, last raw flow including rotation (for CHECK_FLOW)
+static float   flowRateForward  = 0.0f;
+static bool    flowValid        = false;
+static uint8_t flowLoopCount    = 0;
+static float   flowTiltRight    = 0.0f; // rad of roll since the last flow read
+static float   flowTiltForward  = 0.0f;
+static float   flowElapsed      = 0.0f; // s since the last flow read
+static float   rollDriftCorrection  = 0.0f; // deg, added to the roll angle setpoint
+static float   pitchDriftCorrection = 0.0f;
+
 constexpr float   ARM_THROTTLE      = 0.08f; // stick above this arms (once unblocked)
 constexpr float   IDLE_THROTTLE     = 0.03f; // stick at/below this disarms and unblocks arming
 constexpr uint8_t IMU_FAIL_LIMIT    = 25;    // consecutive failed IMU reads (100 ms at 250 Hz) before disarming
@@ -106,7 +136,11 @@ PID pitchAnglePID(3.0, 0.0, 0.0, -MAX_TILT_RATE, MAX_TILT_RATE); // outer loop: 
 PID rollRatePID(0.0045, 0.0008, 0.00002, -ROLL_CORRECTION_LIMIT, ROLL_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // inner loop: roll rate
 PID pitchRatePID(0.0045, 0.0008, 0.00002, -PITCH_CORRECTION_LIMIT, PITCH_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // inner loop: pitch rate
 PID yawPID(0.004, 0.002, 0.0, -YAW_CORRECTION_LIMIT, YAW_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // yaw rate
-SerialTuner tuner(rollAnglePID, rollRatePID, pitchAnglePID, pitchRatePID, yawPID, altitudePID);
+// Drift hold: flow velocity (rad/s) -> angle setpoint offset (deg). Untuned starting point.
+PID driftRollPID(8.0, 0.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
+PID driftPitchPID(8.0, 0.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
+SerialTuner tuner(rollAnglePID, rollRatePID, pitchAnglePID, pitchRatePID, yawPID, altitudePID,
+                  driftRollPID, driftPitchPID);
 
 unsigned long previousLoopTime;
 unsigned long lastTelemetryTime = 0;
@@ -158,6 +192,9 @@ void setup() {
     if (!flowAvailable) {
       Serial.println(F("Optical flow sensor not found - drift hold disabled. Check SPI wiring."));
     }
+    #if CHECK_FLOW
+      checkOpticalFlow(); // does not return
+    #endif
 
     receiver.init();
     esc.begin(motorPins); // Timer1 keeps sending min-throttle pulses from here on
@@ -305,8 +342,27 @@ void run() {
     throttle = constrain(throttle, 0.0f, MAX_THROTTLE);
   }
 
-  float rollSetpoint = receiver.getRoll() * MAX_TILT_ANGLE + ROLL_TRIM_DEG;
-  float pitchSetpoint = receiver.getPitch() * MAX_TILT_ANGLE + PITCH_TRIM_DEG;
+  // Drift hold: once airborne (hover, or enough stick throttle to be off the ground), and only on an
+  // axis whose stick is centred so the pilot can still move it
+  float flowSampleDt = 0.0f;
+  const bool newFlowSample = flowAvailable && updateFlowVelocity(dt, flowSampleDt);
+  const bool airborne = hoverActive || throttleFilt > DRIFT_MIN_THROTTLE;
+  const bool driftHold = airborne && flowValid;
+  if (driftHold && receiver.getRoll() == 0.0f) {
+    if (newFlowSample) rollDriftCorrection = driftRollPID.compute(0.0f, flowVelRight, flowSampleDt);
+  } else {
+    driftRollPID.reset();
+    rollDriftCorrection = 0.0f;
+  }
+  if (driftHold && receiver.getPitch() == 0.0f) {
+    if (newFlowSample) pitchDriftCorrection = driftPitchPID.compute(0.0f, flowVelForward, flowSampleDt);
+  } else {
+    driftPitchPID.reset();
+    pitchDriftCorrection = 0.0f;
+  }
+
+  float rollSetpoint = receiver.getRoll() * MAX_TILT_ANGLE + ROLL_TRIM_DEG + rollDriftCorrection;
+  float pitchSetpoint = receiver.getPitch() * MAX_TILT_ANGLE + PITCH_TRIM_DEG + pitchDriftCorrection;
   float yawRateSetpoint = receiver.getYaw() * MAX_YAW_RATE;
 
   // Outer loop: angle error -> desired rotation rate
@@ -346,6 +402,14 @@ void run() {
       setpointToPrint = hoverSetpoint;
       measuredToPrint = hoverMeasured;
       outputToPrint = hoverCorrection;
+    } else if (strcmp(axis, "driftroll") == 0) {
+      setpointToPrint = 0.0f;
+      measuredToPrint = flowVelRight;
+      outputToPrint = rollDriftCorrection;
+    } else if (strcmp(axis, "driftpitch") == 0) {
+      setpointToPrint = 0.0f;
+      measuredToPrint = flowVelForward;
+      outputToPrint = pitchDriftCorrection;
     } else {
       setpointToPrint = 0.0f;
       measuredToPrint = 0.0f;
@@ -373,6 +437,54 @@ void disarm() {
   throttleIdle    = true;
   armBlocked      = true;
   mixer.stopAllMotors();
+}
+
+/**
+ * @brief Track rotation each loop and turn the latest flow reading into drift velocity
+ * @details Rotating the drone makes the ground appear to move, so the gyro's tilt over the same
+ * window is added back (rotation and drift show up with opposite signs). Sets flowVelRight/Forward
+ * and flowValid; a low-quality frame leaves the old velocity in place and clears flowValid.
+ * @param[in] dt Loop time step in seconds
+ * @param[out] sampleDt Time covered by the new sample, when one was taken
+ * @return True if the sensor was read this call
+ */
+bool updateFlowVelocity(float dt, float& sampleDt) {
+  flowTiltRight   += imu.getGyroY() * DEG_TO_RAD * dt; // roll rate (same axis the roll rate loop uses)
+  flowTiltForward += imu.getGyroX() * DEG_TO_RAD * dt; // pitch rate
+  flowElapsed     += dt;
+  if (++flowLoopCount < FLOW_READ_DIVIDER) {
+    return false;
+  }
+  flowLoopCount = 0;
+  sampleDt = flowElapsed;
+
+  const bool ok = opticalFlow.readData();
+  const int16_t sensorRight   = FLOW_SWAP_XY ? opticalFlow.getDeltaY() : opticalFlow.getDeltaX();
+  const int16_t sensorForward = FLOW_SWAP_XY ? opticalFlow.getDeltaX() : opticalFlow.getDeltaY();
+  const float flowRight   = FLOW_RIGHT_SIGN   * sensorRight   * FLOW_RAD_PER_COUNT;
+  const float flowForward = FLOW_FORWARD_SIGN * sensorForward * FLOW_RAD_PER_COUNT;
+  flowRateRight   = flowRight / sampleDt;
+  flowRateForward = flowForward / sampleDt;
+
+  if (ok) {
+    const float velRight   = (flowRight + flowTiltRight) / sampleDt;
+    const float velForward = (flowForward + flowTiltForward) / sampleDt;
+    if (flowValid) {
+      const float tau = 1.0f / (2.0f * PI * FLOW_FILTER_HZ);
+      const float alpha = sampleDt / (tau + sampleDt);
+      flowVelRight   += alpha * (velRight - flowVelRight);
+      flowVelForward += alpha * (velForward - flowVelForward);
+    } else {
+      flowVelRight   = velRight;   // restart the filter after a bad patch
+      flowVelForward = velForward;
+    }
+  }
+  flowValid = ok;
+
+  flowTiltRight   = 0.0f;
+  flowTiltForward = 0.0f;
+  flowElapsed     = 0.0f;
+  return true;
 }
 
 /**
@@ -532,5 +644,50 @@ void calibrateImuLevel() {
   }
   Serial.println(F("Set CALIBRATE_IMU to 0 and re-upload to fly."));
   while (true) {}
+}
+#endif
+#if CHECK_FLOW
+/**
+ * @brief Plot optical flow against the gyro to set the FLOW_ mounting constants
+ * @details Streams Teleplot values at 20 Hz; ESCs receive no signal while this runs.
+ * Rotation alone should give flow that overlaps "rot", leaving "vel" near zero.
+ * @return Never returns
+ */
+void checkOpticalFlow() {
+  if (!flowAvailable) {
+    Serial.println(F("No optical flow sensor - nothing to check."));
+    while (true) {}
+  }
+  Serial.println(F("Optical flow check (props OFF). Hold the drone 20-50 cm over a textured, lit floor."));
+  Serial.println(F("1. Tilt right/left without sliding: flowRight should overlap rotRight and velRight stay near 0."));
+  Serial.println(F("   Mirrored -> flip FLOW_RIGHT_SIGN. Moves flowForward instead -> set FLOW_SWAP_XY."));
+  Serial.println(F("   Right shape, wrong size -> multiply FLOW_RAD_PER_COUNT by rotRight / flowRight."));
+  Serial.println(F("2. Same for pitch with flowForward / rotForward."));
+  Serial.println(F("3. Slide right without tilting: velRight goes positive. Slide forward: velForward positive."));
+
+  unsigned long previous = micros();
+  unsigned long lastPrint = 0;
+  while (true) {
+    delay(4);
+    const unsigned long now = micros();
+    const float dt = (now - previous) / 1000000.0f;
+    previous = now;
+    imu.readData(); // on a failed read, keep the last sample
+
+    float sampleDt;
+    if (!updateFlowVelocity(dt, sampleDt) || millis() - lastPrint < 50) {
+      continue;
+    }
+    lastPrint = millis();
+
+    // deg/s throughout; "rot" is the flow that pure rotation should produce
+    Serial.print(F(">flowRight:"));   Serial.println(flowRateRight * RAD_TO_DEG);
+    Serial.print(F(">rotRight:"));    Serial.println(-imu.getGyroY());
+    Serial.print(F(">velRight:"));    Serial.println(flowVelRight * RAD_TO_DEG);
+    Serial.print(F(">flowForward:")); Serial.println(flowRateForward * RAD_TO_DEG);
+    Serial.print(F(">rotForward:"));  Serial.println(-imu.getGyroX());
+    Serial.print(F(">velForward:"));  Serial.println(flowVelForward * RAD_TO_DEG);
+    Serial.print(F(">quality:"));     Serial.println(opticalFlow.getQuality());
+  }
 }
 #endif
