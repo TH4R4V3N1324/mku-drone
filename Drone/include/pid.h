@@ -1,6 +1,8 @@
 #ifndef PID_H
 #define PID_H
 
+#include <Arduino.h>
+
 class PID {
 public:
     /**
@@ -82,7 +84,7 @@ private:
     float prevMeasured;
     float integral;
     float filteredDerivative;
-    bool firstRun = true;
+    bool firstRun;
 };
 
 #endif // PID_H

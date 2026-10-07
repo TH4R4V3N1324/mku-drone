@@ -77,7 +77,7 @@ static uint8_t imuFailCount = 0;
 
 PID altitudePID(0.1, 0.0, 0.0, -HOVER_CORRECTION_LIMIT, HOVER_CORRECTION_LIMIT); // PID controller for altitude
 // Cascaded attitude control: angle error (deg) -> outer P -> rate setpoint (deg/s) -> inner PID on gyro -> motor correction.
-// Starting gains are equivalent to the previous single-loop roll/pitch PID (P 0.0038, I 0.0018, D 0.0006): outer P = Kp/Kd, inner P = Kd, inner I = Ki / outer P.
+// Roll/pitch gains tuned on a single-axis test rig; yaw is not tuned yet.
 PID rollAnglePID(3.0 , 0.0, 0.0, -MAX_TILT_RATE, MAX_TILT_RATE); // outer loop: roll angle -> roll rate setpoint
 PID pitchAnglePID(3.0, 0.0, 0.0, -MAX_TILT_RATE, MAX_TILT_RATE); // outer loop: pitch angle -> pitch rate setpoint
 PID rollRatePID(0.0045, 0.0008, 0.00002, -ROLL_CORRECTION_LIMIT, ROLL_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // inner loop: roll rate
@@ -98,8 +98,12 @@ void setup() {
     Wire.setWireTimeout(3000, true); // Set I2C timeout to 3 ms (value is in us) and reset the bus on timeout
 
     imu.init();
-    imu.calibrate();
-    
+    if (!imu.calibrate()) {
+      // Never start the ESC output without valid IMU offsets; ESCs stay unarmed with no signal
+      Serial.println(F("IMU calibration failed (I2C error). Check wiring and power-cycle."));
+      while (true) {}
+    }
+
     receiver.init();
     esc.begin(motorPins); // Timer1 keeps sending min-throttle pulses from here on
     delay(2000);
@@ -343,7 +347,8 @@ void test() {
 /**
  * @brief Calibrate the ESCs by sending a high throttle signal followed by a low throttle signal
  * @details This function should be called once on startup with the propellers removed.
- * It sends a high throttle signal for 2 seconds, then a low throttle signal for 2 seconds.
+ * It sends a high throttle signal for 15 seconds (power the ESCs during this), then a low
+ * throttle signal for 10 seconds, then halts.
  * @return None
  */
 void calibrateEscs() {

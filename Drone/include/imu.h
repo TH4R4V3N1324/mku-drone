@@ -18,20 +18,21 @@ const int IMU_ADDRESS = 0x68;
 
 class IMU {
 public:
-    IMU(): 	
-		data{},
+    IMU() :
+        data{},
         lastReadTime(0),
-      	pitch(0.0f),
-		roll(0.0f),
-		yaw(0.0f),
-		gyroOffsetX(0.0f),
-		gyroOffsetY(0.0f),
-		gyroOffsetZ(0.0f),
+        i2cAddress(IMU_ADDRESS),
+        pitch(0.0f),
+        roll(0.0f),
+        yaw(0.0f),
+        gyroOffsetX(0.0f),
+        gyroOffsetY(0.0f),
+        gyroOffsetZ(0.0f),
         accelPitchOffset(0.0f),
         accelRollOffset(0.0f),
         accelZOffset(0.0f) {}
     void init(int address = IMU_ADDRESS);
-    void calibrate();
+    bool calibrate();
     bool readData();
     void printData();
     void printOrientation();
@@ -86,17 +87,21 @@ public:
      */
     float getYaw() const { return yaw; }
 private:
+    struct RawSample {
+        int16_t ax, ay, az, temp, gx, gy, gz;
+    };
+    bool readRaw(RawSample& raw);
     void calculateOrientation(float accelPitch, float accelRoll);
     static void accelAngles(float ax, float ay, float az, float& pitchDeg, float& rollDeg);
     IMUData data;
     unsigned long lastReadTime;
     int i2cAddress;
-    const float ACCEL_SCALE = 4096.0; // Scale factor for accelerometer (+/- 8g)
-    const float GYRO_SCALE = 32.8; // Scale factor for gyroscope
-    const float TEMP_SCALE = 340.0; // Scale factor for temperature
-    const float TEMP_OFFSET = 36.53; // Offset for temperature
-    const float GRAVITY = 9.80665; // Gravity constant for m/s^2 conversion
-    const float ANGLE_FILTER_TAU = 1.0f; // s, complementary filter time constant (higher = trust gyro longer)
+    static constexpr float ACCEL_SCALE = 4096.0f; // Scale factor for accelerometer (+/- 8g)
+    static constexpr float GYRO_SCALE = 32.8f; // Scale factor for gyroscope (+/- 1000 deg/s)
+    static constexpr float TEMP_SCALE = 340.0f; // Scale factor for temperature
+    static constexpr float TEMP_OFFSET = 36.53f; // Offset for temperature
+    static constexpr float GRAVITY = 9.80665f; // Gravity constant for m/s^2 conversion
+    static constexpr float ANGLE_FILTER_TAU = 1.0f; // s, complementary filter time constant (higher = trust gyro longer)
     float pitch;
     float roll;
     float yaw;
