@@ -16,7 +16,7 @@ void IMU::init(int address) {
 
     Wire.beginTransmission(i2cAddress);
     Wire.write(0x1A); // Configuration register
-    Wire.write(0x03); // Set DLPF to 3 (44Hz)
+    Wire.write(0x02); // Set DLPF to 2 (gyro 98Hz, ~2.8ms delay; below the 125Hz Nyquist of the 250Hz loop)
     Wire.endTransmission(true);
 
     Wire.beginTransmission(i2cAddress);
@@ -24,12 +24,23 @@ void IMU::init(int address) {
     Wire.write(0x00); // Set sample rate to 1kHz
     Wire.endTransmission(true);
 
-    lastReadTime = millis();
+    Wire.beginTransmission(i2cAddress);
+    Wire.write(0x1B); // Gyroscope configuration register
+    Wire.write(0x10); // Set full scale range to +/- 1000 degrees/sec
+    Wire.endTransmission(true);
+
+    Wire.beginTransmission(i2cAddress);
+    Wire.write(0x1C); // Accelerometer configuration register
+    Wire.write(0x10); // Set full scale range to +/- 8g (headroom so motor vibration doesn't clip)
+    Wire.endTransmission(true);
+
+    lastReadTime = micros();
 }
 
 /**
  * @brief Calibrate the IMU
- * @details Calibrates the gyroscope by averaging stationary angular-rate samples
+ * @details Averages stationary samples to find gyro bias, level accelerometer angles, and Z-axis bias.
+ * The drone must be still and on the surface that should read as level.
  * @return None
  */
 void IMU::calibrate() {
@@ -57,12 +68,11 @@ void IMU::calibrate() {
         int16_t gy = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
         int16_t gz = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
 
-        float accelX = ax / ACCEL_SCALE;
-        float accelY = ay / ACCEL_SCALE;
-        float accelZ = (az / ACCEL_SCALE) * GRAVITY;
-        sumAccelPitch += atan2(accelY, accelZ) * 180.0f / PI;
-        sumAccelRoll += atan2(-accelX, sqrt(accelY * accelY + accelZ * accelZ)) * 180.0f / PI;
-        sumAccelZ += accelZ;
+        float accelPitch, accelRoll;
+        accelAngles(ax / ACCEL_SCALE, ay / ACCEL_SCALE, az / ACCEL_SCALE, accelPitch, accelRoll);
+        sumAccelPitch += accelPitch;
+        sumAccelRoll += accelRoll;
+        sumAccelZ += (az / ACCEL_SCALE) * GRAVITY;
         sumGyroX += gx / GYRO_SCALE;
         sumGyroY += gy / GYRO_SCALE;
         sumGyroZ += gz / GYRO_SCALE;
@@ -79,8 +89,6 @@ void IMU::calibrate() {
     roll = 0.0f;
     yaw = 0.0f;
     lastReadTime = micros();
-    lastFilterTime = 0;
-    filterInitialized = false;
 }
 
 /**
@@ -107,44 +115,41 @@ void IMU::readData() {
     data.accelY = (ay / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
     data.accelZ = (az / ACCEL_SCALE) * GRAVITY - accelZOffset; // Convert to m/s^2 and remove stationary bias
     data.temperature = (temp / TEMP_SCALE) + TEMP_OFFSET; // Convert to degrees Celsius
-    
-    float rawGyroX = (gx / GYRO_SCALE) - gyroOffsetX;
-    float rawGyroY = (gy / GYRO_SCALE) - gyroOffsetY;
-    float rawGyroZ = (gz / GYRO_SCALE) - gyroOffsetZ;
 
-    unsigned long now = micros();
-    float filterDt = lastFilterTime == 0
-        ? 0.0f
-        : (now - lastFilterTime) / 1000000.0f;
-    lastFilterTime = now;
+    data.gyroX = (gx / GYRO_SCALE) - gyroOffsetX;
+    data.gyroY = (gy / GYRO_SCALE) - gyroOffsetY;
+    data.gyroZ = (gz / GYRO_SCALE) - gyroOffsetZ;
 
-    if (!filterInitialized || filterDt <= 0.0f) {
-        filteredGyroX = rawGyroX;
-        filteredGyroY = rawGyroY;
-        filteredGyroZ = rawGyroZ;
-        filterInitialized = true;
-    } else {
-        const float timeConstant = 1.0f / (2.0f * PI * GYRO_FILTER_CUTOFF_HZ);
-        const float filterAlpha = filterDt / (timeConstant + filterDt);
-        filteredGyroX += filterAlpha * (rawGyroX - filteredGyroX);
-        filteredGyroY += filterAlpha * (rawGyroY - filteredGyroY);
-        filteredGyroZ += filterAlpha * (rawGyroZ - filteredGyroZ);
-    }
+    // Same raw-g computation as calibrate(), so the offsets cancel exactly
+    float accelPitch, accelRoll;
+    accelAngles(ax / ACCEL_SCALE, ay / ACCEL_SCALE, az / ACCEL_SCALE, accelPitch, accelRoll);
+    calculateOrientation(accelPitch - accelPitchOffset, accelRoll - accelRollOffset);
+}
 
-    data.gyroX = filteredGyroX;
-    data.gyroY = filteredGyroY;
-    data.gyroZ = filteredGyroZ;
-
-    calculateOrientation();
+/**
+ * @brief Compute tilt angles from a gravity vector
+ * @param[in] ax X acceleration (any unit, all three axes the same)
+ * @param[in] ay Y acceleration
+ * @param[in] az Z acceleration
+ * @param[out] pitchDeg Pitch angle in degrees (rotation about X)
+ * @param[out] rollDeg Roll angle in degrees (rotation about Y)
+ * @return None
+ */
+void IMU::accelAngles(float ax, float ay, float az, float& pitchDeg, float& rollDeg) {
+    pitchDeg = atan2(ay, az) * RAD_TO_DEG;
+    rollDeg = atan2(-ax, sqrt(ay * ay + az * az)) * RAD_TO_DEG;
 }
 
 /**
  * @brief Calculate the orientation (pitch, roll, yaw) of the IMU
- * @details Uses a complementary filter to combine accelerometer and gyroscope data to calculate pitch, roll, and yaw
+ * @details Complementary filter: integrates the gyro and pulls slowly towards the
+ * accelerometer angle with time constant ANGLE_FILTER_TAU. Accelerometer vibration
+ * is attenuated by the same time constant, so it needs no separate filter.
+ * @param[in] accelPitch Offset-corrected accelerometer pitch in degrees
+ * @param[in] accelRoll Offset-corrected accelerometer roll in degrees
  * @return None
  */
-void IMU::calculateOrientation() {
-    // Calculate pitch and roll using complementary filter
+void IMU::calculateOrientation(float accelPitch, float accelRoll) {
     unsigned long now = micros();
     float dt = (now - lastReadTime) / 1000000.0f;
     lastReadTime = now;
@@ -153,13 +158,12 @@ void IMU::calculateOrientation() {
         dt = 0.01f;
     }
 
-    float accelPitch = atan2(data.accelY, data.accelZ) * 180.0f / PI - accelPitchOffset;
-    float accelRoll = atan2(-data.accelX, sqrt(data.accelY * data.accelY + data.accelZ * data.accelZ)) * 180.0f / PI - accelRollOffset;
+    const float alpha = ANGLE_FILTER_TAU / (ANGLE_FILTER_TAU + dt);
     float gyroPitch = pitch + data.gyroX * dt;
     float gyroRoll = roll + data.gyroY * dt;
 
-    pitch = ALPHA * gyroPitch + (1 - ALPHA) * accelPitch;
-    roll = ALPHA * gyroRoll + (1 - ALPHA) * accelRoll;
+    pitch = alpha * gyroPitch + (1.0f - alpha) * accelPitch;
+    roll = alpha * gyroRoll + (1.0f - alpha) * accelRoll;
     yaw += data.gyroZ * dt; // Integrate yaw from gyroscope
 }
 /**
