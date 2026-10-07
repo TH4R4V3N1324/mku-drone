@@ -1,20 +1,22 @@
 #ifndef MOTOR_MIXER_H
 #define MOTOR_MIXER_H
 
-#include "motor.h"
+#include "escOutput.h"
 
+/**
+ * @brief Quad-X mixer: turns throttle/roll/pitch/yaw into four ESC commands
+ * @details ESC order is front left, front right, rear right, rear left,
+ * matching the pin order passed to EscOutput::begin().
+ */
 class MotorMixer {
 public:
-    MotorMixer(Motor& motor1, Motor& motor2, Motor& motor3, Motor& motor4)
-        : motor1(motor1), motor2(motor2), motor3(motor3), motor4(motor4) {}
+    explicit MotorMixer(EscOutput& esc) : esc(esc) {}
     void mixMotors(float throttle, float roll, float pitch, float yaw);
-    void beginAllMotors();
     void stopAllMotors();
+    void setAllMotors(float speed);
 private:
-    Motor& motor1;
-    Motor& motor2;
-    Motor& motor3;
-    Motor& motor4;
+    static uint16_t speedToPulse(float speed);
+    EscOutput& esc;
 };
 
 #endif // MOTOR_MIXER_H

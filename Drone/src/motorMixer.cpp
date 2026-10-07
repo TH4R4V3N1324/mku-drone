@@ -11,33 +11,13 @@
  */
 void MotorMixer::mixMotors(float throttle, float roll, float pitch, float yaw) {
     // Simple mixing algorithm for a quadcopter in X configuration
-    float motor1Speed = throttle + roll + pitch + yaw; // Front Left
-    float motor2Speed = throttle - roll + pitch - yaw; // Front Right
-    float motor3Speed = throttle - roll - pitch + yaw; // Rear Right
-    float motor4Speed = throttle + roll - pitch - yaw; // Rear Left
-
-    // Keep mixer outputs in the normalized Motor speed range (0-1).
-    motor1Speed = constrain(motor1Speed, 0.0f, 1.0f);
-    motor2Speed = constrain(motor2Speed, 0.0f, 1.0f);
-    motor3Speed = constrain(motor3Speed, 0.0f, 1.0f);
-    motor4Speed = constrain(motor4Speed, 0.0f, 1.0f);
-
-    // Set motor speeds
-    motor1.setSpeed(motor1Speed);
-    motor2.setSpeed(motor2Speed);
-    motor3.setSpeed(motor3Speed);
-    motor4.setSpeed(motor4Speed);
-}
-
-/**
- * @brief Initialize all motors
- * @return None
- */
-void MotorMixer::beginAllMotors() {
-    motor1.begin();
-    motor2.begin();
-    motor3.begin();
-    motor4.begin();
+    const uint16_t pulses[ESC_COUNT] = {
+        speedToPulse(throttle + roll + pitch + yaw), // Front Left
+        speedToPulse(throttle - roll + pitch - yaw), // Front Right
+        speedToPulse(throttle - roll - pitch + yaw), // Rear Right
+        speedToPulse(throttle + roll - pitch - yaw), // Rear Left
+    };
+    esc.write(pulses);
 }
 
 /**
@@ -45,8 +25,24 @@ void MotorMixer::beginAllMotors() {
  * @return None
  */
 void MotorMixer::stopAllMotors() {
-    motor1.stop();
-    motor2.stop();
-    motor3.stop();
-    motor4.stop();
+    esc.writeAll(ESC_MIN_PULSE_US);
+}
+
+/**
+ * @brief Command all motors to the same speed without mixing (used for ESC calibration)
+ * @param[in] speed The speed of every motor (0.0 to 1.0)
+ * @return None
+ */
+void MotorMixer::setAllMotors(float speed) {
+    esc.writeAll(speedToPulse(speed));
+}
+
+/**
+ * @brief Convert a normalized motor speed to an ESC pulse width
+ * @param[in] speed The speed of the motor (clamped to 0.0 to 1.0)
+ * @return Pulse width in microseconds
+ */
+uint16_t MotorMixer::speedToPulse(float speed) {
+    speed = constrain(speed, 0.0f, 1.0f);
+    return static_cast<uint16_t>(ESC_MIN_PULSE_US + speed * (ESC_MAX_PULSE_US - ESC_MIN_PULSE_US));
 }

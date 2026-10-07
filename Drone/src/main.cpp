@@ -3,7 +3,7 @@
 #include <string.h>
 #include "imu.h"
 #include "motorMixer.h"
-#include "motor.h"
+#include "escOutput.h"
 #include "pid.h"
 #include "receiver.h"
 #include "serialTuner.h"
@@ -19,11 +19,10 @@ void test();
 void calibrateEscs();
 #endif
 
-Motor motor1(4); // PWM pin for motor 1
-Motor motor2(5); // PWM pin for motor 2
-Motor motor3(6); // PWM pin for motor 3
-Motor motor4(7); // PWM pin for motor 4
-MotorMixer mixer(motor1, motor2, motor3, motor4);
+// ESC signal pins: front left, front right, rear right, rear left (must be on PORTD)
+constexpr uint8_t motorPins[ESC_COUNT] = {4, 5, 6, 7};
+EscOutput esc;
+MotorMixer mixer(esc);
 IMU imu;
 
 constexpr uint8_t throttlePin = 9;
@@ -78,7 +77,7 @@ void setup() {
     imu.init();
     imu.calibrate();
     receiver.init();
-    mixer.beginAllMotors();
+    esc.begin(motorPins); // Timer1 keeps sending min-throttle pulses from here on
     delay(2000);
     mixer.stopAllMotors();
     previousLoopTime = micros();
@@ -86,6 +85,7 @@ void setup() {
 }
 
 void loop() {
+  esc.waitForNextCycle(); // fixed ESC_UPDATE_RATE_HZ control loop
   if (TUNE_PID) {tuner.update();}
   run();
   //test();
@@ -100,7 +100,7 @@ void run() {
   unsigned long now = micros();
   float dt = (now - previousLoopTime) / 1000000.0f;
   previousLoopTime = now;
-  if (dt <= 0.0f || dt > 0.1f) dt = 0.01f;
+  if (dt <= 0.0f || dt > 0.1f) dt = 1.0f / ESC_UPDATE_RATE_HZ;
 
   imu.readData();
   receiver.readData();
@@ -273,21 +273,19 @@ void test() {
  * @return None
  */
 void calibrateEscs() {
-  mixer.beginAllMotors();
+  esc.begin(motorPins);
 
   Serial.println(F("ESC calibration: props OFF."));
   Serial.println(F("Sending MAX throttle — power the ESCs now."));
   unsigned long start = millis();
   while (millis() - start < 15000) {
-    motor1.setSpeed(1.0f); motor2.setSpeed(1.0f);
-    motor3.setSpeed(1.0f); motor4.setSpeed(1.0f);
+    mixer.setAllMotors(1.0f); // keep refreshing so the output watchdog doesn't drop to min
   }
 
   Serial.println(F("Sending MIN throttle — listen for confirmation beeps."));
   start = millis();
   while (millis() - start < 10000) {
-    motor1.setSpeed(0.0f); motor2.setSpeed(0.0f);
-    motor3.setSpeed(0.0f); motor4.setSpeed(0.0f);
+    mixer.setAllMotors(0.0f);
   }
 
   Serial.println(F("Calibration pulses sent. Halting — power-cycle to arm normally."));

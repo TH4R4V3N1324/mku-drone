@@ -111,7 +111,7 @@ Use the commands `axis r`, `axis p`, `axis y`, or `axis h` to select roll, pitch
 ```text
 include/                 Public firmware headers
   imu.h                   MPU-6050 and orientation interface
-  motor.h                 ESC output interface
+  escOutput.h             Timer1 ESC output interface
   motorMixer.h            Quad-X mixer interface
   pid.h                   PID controller
   receiver.h              PWM receiver interface
@@ -119,7 +119,7 @@ include/                 Public firmware headers
 src/                     Firmware implementation
   main.cpp                Setup, control loop, telemetry, and test loop
   imu.cpp                 MPU-6050 reading and complementary filter
-  motor.cpp               ESC pulse generation
+  escOutput.cpp           Timer1 ESC pulse generation
   motorMixer.cpp          Quad-X mixing
   receiver.cpp            Receiver pulse decoding
 platformio.ini            PlatformIO configuration
