@@ -8,16 +8,19 @@ constexpr unsigned long SIGNAL_TIMEOUT_US = 100000UL; // channel is lost if no p
 constexpr uint16_t MIN_VALID_PULSE_US = 900;
 constexpr uint16_t MAX_VALID_PULSE_US = 2100;
 constexpr float STICK_DEADBAND = 0.05f;
+constexpr float STICK_MIN_OUTPUT = 0.01f; // output magnitude just outside the deadband
 
 /**
- * @brief Zero small stick values and rescale the rest so output still starts at 0 and reaches +/-1
+ * @brief Zero small stick values and rescale the rest so output starts at +/-STICK_MIN_OUTPUT and reaches +/-1
  */
 float applyDeadband(float value) {
     const float magnitude = fabsf(value);
     if (magnitude <= STICK_DEADBAND) {
         return 0.0f;
     }
-    return copysignf((magnitude - STICK_DEADBAND) / (1.0f - STICK_DEADBAND), value);
+
+    const float scaled = (magnitude - STICK_DEADBAND) / (1.0f - STICK_DEADBAND);
+    return copysignf(STICK_MIN_OUTPUT + (1.0f - STICK_MIN_OUTPUT) * scaled, value);
 }
 }
 
