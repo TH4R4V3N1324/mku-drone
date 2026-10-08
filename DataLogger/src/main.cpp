@@ -13,6 +13,7 @@ File32 flightLog;
 
 int flightNum = 0;
 unsigned long lastLogTime = 0;
+volatile uint8_t loopTicksPending = 0; // Set by the Timer1 ISR at 500 Hz
 
 struct BinaryLogRecord {
   uint32_t timestampUs;
@@ -36,6 +37,23 @@ void stopWithError(const __FlashStringHelper *message) {
   while (true) {
     delay(1000);
   }
+}
+
+ISR(TIMER1_COMPA_vect) {
+  if (loopTicksPending < 255) {
+    loopTicksPending++;
+  }
+}
+
+// Timer1 in CTC mode: 16 MHz / 8 prescaler / (3999 + 1) = 500 Hz
+void startLoopTimer() {
+  noInterrupts();
+  TCCR1A = 0;
+  TCCR1B = _BV(WGM12) | _BV(CS11);
+  TCNT1 = 0;
+  OCR1A = 3999;
+  TIMSK1 = _BV(OCIE1A);
+  interrupts();
 }
 
 void setup() {
@@ -88,13 +106,21 @@ void setup() {
   logBuffer.attach(flightLog);
   Serial.print("Logging to ");
   Serial.println(filename);
+
+  startLoopTimer();
 }
 
 void loop() {
-  imu.readData();
-  
+  if (loopTicksPending == 0) {
+    return; // Wait for the next Timer1 tick
+  }
+  // Single-byte access is atomic on AVR; drop any ticks missed while we were busy
+  loopTicksPending = 0;
+
   unsigned long currentTime = micros();
 
+  imu.readData();
+  
   float pitch = imu.getPitch();
   float roll = imu.getRoll();
   float yaw = imu.getYaw();
