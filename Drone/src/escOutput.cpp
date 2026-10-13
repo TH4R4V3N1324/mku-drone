@@ -3,9 +3,9 @@
 namespace {
 constexpr uint16_t TICKS_PER_US = 2;                                    // Timer1 at 16 MHz / 8
 constexpr uint16_t PERIOD_TICKS = (F_CPU / 8UL) / ESC_UPDATE_RATE_HZ;
-constexpr uint16_t MIN_PULSE_TICKS = ESC_MIN_PULSE_US * TICKS_PER_US;
+constexpr uint16_t STOP_PULSE_TICKS = ESC_STOP_PULSE_US * TICKS_PER_US;
 constexpr uint16_t EDGE_MARGIN_TICKS = 10;                              // edges closer than 5 us are busy-waited in the ISR
-constexpr uint8_t WATCHDOG_CYCLES = ESC_UPDATE_RATE_HZ / 5;             // 200 ms without a new command -> min throttle
+constexpr uint8_t WATCHDOG_CYCLES = ESC_UPDATE_RATE_HZ / 5;             // 200 ms without a new command -> motors off
 
 static_assert(F_CPU == 16000000UL, "Timer1 tick math assumes a 16 MHz clock");
 static_assert(PERIOD_TICKS >= (ESC_MAX_PULSE_US + 200) * TICKS_PER_US, "ESC rate too high for a 2 ms max pulse");
@@ -39,7 +39,7 @@ ISR(TIMER1_COMPA_vect) {
     }
 
     for (uint8_t i = 0; i < ESC_COUNT; ++i) {
-        activeEdges[i] = rise + (expired ? MIN_PULSE_TICKS : pendingTicks[i]);
+        activeEdges[i] = rise + (expired ? STOP_PULSE_TICKS : pendingTicks[i]);
         activeMasks[i] = pendingMasks[i];
     }
 
@@ -65,7 +65,7 @@ ISR(TIMER1_COMPB_vect) {
 }
 
 /**
- * @brief Configure the ESC pins and start the Timer1 output at minimum throttle
+ * @brief Configure the ESC pins and start the Timer1 output with the motors off
  * @details Pins that are not on PORTD get an empty mask and are never driven.
  * @param[in] pins The four ESC signal pins
  * @return None
@@ -81,7 +81,7 @@ void EscOutput::begin(const uint8_t (&pins)[ESC_COUNT]) {
         allMasks |= portMasks[i];
     }
     escPortMask = allMasks;
-    writeAll(ESC_MIN_PULSE_US);
+    writeAll(ESC_STOP_PULSE_US);
 
     noInterrupts();
     TCCR1A = 0;
@@ -98,7 +98,7 @@ void EscOutput::begin(const uint8_t (&pins)[ESC_COUNT]) {
 /**
  * @brief Set the pulse widths for the next output cycle
  * @details All four widths are handed to the ISR together, so a cycle never
- * mixes old and new values. Widths are clamped to the ESC range.
+ * mixes old and new values. Widths are clamped to ESC_STOP_PULSE_US..ESC_MAX_PULSE_US.
  * @param[in] pulseUs Pulse width per ESC in microseconds, in begin() pin order
  * @return None
  */
@@ -108,7 +108,7 @@ void EscOutput::write(const uint16_t (&pulseUs)[ESC_COUNT]) {
 
     // Insertion sort so the ISR can drop the pins in order
     for (uint8_t i = 0; i < ESC_COUNT; ++i) {
-        const uint16_t t = constrain(pulseUs[i], ESC_MIN_PULSE_US, ESC_MAX_PULSE_US) * TICKS_PER_US;
+        const uint16_t t = constrain(pulseUs[i], ESC_STOP_PULSE_US, ESC_MAX_PULSE_US) * TICKS_PER_US;
         uint8_t j = i;
         while (j > 0 && ticks[j - 1] > t) {
             ticks[j] = ticks[j - 1];
