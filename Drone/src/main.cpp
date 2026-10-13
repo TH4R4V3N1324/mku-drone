@@ -43,9 +43,9 @@ MotorMixer mixer(esc);
 IMU imu;
 
 // Receiver pins avoid D10-D13, which are the hardware SPI pins for the flow sensor
-constexpr uint8_t throttlePin = A0;
-constexpr uint8_t rollPin     = A1;
-constexpr uint8_t pitchPin    = A2;
+constexpr uint8_t throttlePin = A2;
+constexpr uint8_t rollPin     = A0;
+constexpr uint8_t pitchPin    = A1;
 constexpr uint8_t yawPin      = A3;
 constexpr uint8_t aux1Pin     = 2;
 constexpr uint8_t aux2Pin     = 3;
@@ -99,10 +99,10 @@ static float steadyTime     = 0.0f;
 // Flow is measured as ground speed / height (rad/s), so the loop is stronger the lower you hover:
 // tune it at the lowest height you'll hold. "Right"/"forward" are the directions positive roll/pitch stick fly.
 // Set the four FLOW_ mounting values with CHECK_FLOW before flying.
-constexpr float   FLOW_RAD_PER_COUNT       = 1.26e-3f; // flow angle per sensor count (ArduPilot's PMW3901 value; check it)
+constexpr float   FLOW_RAD_PER_COUNT       = 1.9e-3f; // flow angle per sensor count (ArduPilot's PMW3901 value; check it)
 constexpr bool    FLOW_SWAP_XY             = true;    // true if the sensor's Y axis points right
 constexpr float   FLOW_RIGHT_SIGN          = -1.0f;     // flip to -1 if right-hand flow comes out mirrored
-constexpr float   FLOW_FORWARD_SIGN        = -1.0f;     // flip to -1 if forward flow comes out mirrored
+constexpr float   FLOW_FORWARD_SIGN        = 1.0f;     // flip to -1 if forward flow comes out mirrored
 constexpr uint8_t FLOW_READ_DIVIDER        = 5;        // read every 5th loop (50 Hz); the sensor makes ~120 frames/s
 constexpr float   FLOW_FILTER_HZ           = 5.0f;     // low-pass on the drift velocity
 constexpr float   DRIFT_CORRECTION_LIMIT   = 8.0f;     // deg, max tilt the drift hold may add
@@ -140,8 +140,8 @@ PID rollRatePID(0.0045, 0.0008, 0.00002, -ROLL_CORRECTION_LIMIT, ROLL_CORRECTION
 PID pitchRatePID(0.0045, 0.0008, 0.00002, -PITCH_CORRECTION_LIMIT, PITCH_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // inner loop: pitch rate
 PID yawPID(0.004, 0.002, 0.0, -YAW_CORRECTION_LIMIT, YAW_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // yaw rate
 // Drift hold: flow velocity (rad/s) -> angle setpoint offset (deg). Untuned starting point.
-PID driftRollPID(8.0, 0.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
-PID driftPitchPID(8.0, 0.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
+PID driftRollPID(6.0, 0.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
+PID driftPitchPID(6.0, 0.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
 SerialTuner tuner(rollAnglePID, rollRatePID, pitchAnglePID, pitchRatePID, yawPID, altitudePID,
                   driftRollPID, driftPitchPID);
 
