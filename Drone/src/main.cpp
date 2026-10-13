@@ -86,10 +86,13 @@ static float steadyTime     = 0.0f;
 constexpr float   ARM_THROTTLE      = 0.08f; // stick above this arms (once unblocked)
 constexpr float   IDLE_THROTTLE     = 0.03f; // stick at/below this disarms and unblocks arming
 constexpr uint8_t IMU_FAIL_LIMIT    = 25;    // consecutive failed IMU reads (100 ms at 250 Hz) before disarming
+constexpr float   CRASH_ANGLE_DEG   = 45.0f; // roll or pitch beyond this means crashed or stuck (max commanded tilt is 30)
+constexpr float   CRASH_TIME_S      = 0.1f;  // how long the tilt must last before cutting the motors
 
 static bool    throttleIdle = true;  // motors stopped (disarmed)
-static bool    armBlocked   = true;  // must see a valid low throttle before arming (boot, signal loss, IMU failure)
+static bool    armBlocked   = true;  // must see a valid low throttle before arming (boot, signal loss, IMU failure, crash)
 static uint8_t imuFailCount = 0;
+static float   crashTime    = 0.0f;  // s spent beyond CRASH_ANGLE_DEG while armed
 
 PID altitudePID(0.1, 0.0, 0.0, -HOVER_CORRECTION_LIMIT, HOVER_CORRECTION_LIMIT); // PID controller for altitude
 // Cascaded attitude control: angle error (deg) -> outer P -> rate setpoint (deg/s) -> inner PID on gyro -> motor correction.
@@ -180,6 +183,16 @@ void run() {
     ++imuFailCount;
   }
   if (imuFailCount >= IMU_FAIL_LIMIT) {
+    disarm();
+    return;
+  }
+
+  // Crash cutoff: a tilt far past anything the sticks can command means flipped, hit or stuck, in any mode
+  const bool tooSteep = fabsf(imu.getRoll()) > CRASH_ANGLE_DEG || fabsf(imu.getPitch()) > CRASH_ANGLE_DEG;
+  crashTime = (tooSteep && !throttleIdle) ? crashTime + dt : 0.0f;
+  if (crashTime >= CRASH_TIME_S) {
+    Serial.println(F("Tilt limit exceeded - motors cut. Lower the throttle to zero to re-arm."));
+    crashTime = 0.0f;
     disarm();
     return;
   }
