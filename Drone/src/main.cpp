@@ -100,9 +100,9 @@ static float steadyTime     = 0.0f;
 // tune it at the lowest height you'll hold. "Right"/"forward" are the directions positive roll/pitch stick fly.
 // Set the four FLOW_ mounting values with CHECK_FLOW before flying.
 constexpr float   FLOW_RAD_PER_COUNT       = 1.26e-3f; // flow angle per sensor count (ArduPilot's PMW3901 value; check it)
-constexpr bool    FLOW_SWAP_XY             = false;    // true if the sensor's Y axis points right
-constexpr float   FLOW_RIGHT_SIGN          = 1.0f;     // flip to -1 if right-hand flow comes out mirrored
-constexpr float   FLOW_FORWARD_SIGN        = 1.0f;     // flip to -1 if forward flow comes out mirrored
+constexpr bool    FLOW_SWAP_XY             = true;    // true if the sensor's Y axis points right
+constexpr float   FLOW_RIGHT_SIGN          = -1.0f;     // flip to -1 if right-hand flow comes out mirrored
+constexpr float   FLOW_FORWARD_SIGN        = -1.0f;     // flip to -1 if forward flow comes out mirrored
 constexpr uint8_t FLOW_READ_DIVIDER        = 5;        // read every 5th loop (50 Hz); the sensor makes ~120 frames/s
 constexpr float   FLOW_FILTER_HZ           = 5.0f;     // low-pass on the drift velocity
 constexpr float   DRIFT_CORRECTION_LIMIT   = 8.0f;     // deg, max tilt the drift hold may add
