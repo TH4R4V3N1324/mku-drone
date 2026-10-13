@@ -35,7 +35,20 @@ bool OpticalFlow::init(uint8_t csPin) {
     delay(1);
 
     writePerformanceSettings();
+    setLed(true);
     return true;
+}
+
+/**
+ * @brief Switch the breakout's white illumination LEDs
+ * @details The LEDs are driven by the sensor, not wired to power, so they stay off until this
+ *          register is written. Same sequence as Pimoroni's driver; ends back on bank 0.
+ * @param[in] on True to turn the LEDs on
+ */
+void OpticalFlow::setLed(bool on) {
+    writeRegister(0x7F, 0x14);
+    writeRegister(0x6F, on ? 0x1C : 0x00);
+    writeRegister(0x7F, 0x00);
 }
 
 /**

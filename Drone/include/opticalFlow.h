@@ -19,6 +19,7 @@ public:
     bool init(uint8_t csPin);
     bool readData();
     void printData();
+    void setLed(bool on);
     /**
      * @brief Get the X motion since the last read.
      * @return Raw flow counts (not yet scaled by height or compensated for rotation).
