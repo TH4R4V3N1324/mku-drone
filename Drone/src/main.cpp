@@ -153,6 +153,14 @@ void setup() {
   #if CALIBRATE_ESCS
     calibrateEscs();
   #else
+    // Hold the ESC signal pins low until esc.begin(): left floating through calibration, the ESCs
+    // can arm on noise (or misdetect the protocol) and keep twitching afterwards. Low reads as no
+    // signal, so the ESCs still only arm (and beep) once calibration is done.
+    for (uint8_t pin : motorPins) {
+      pinMode(pin, OUTPUT);
+      digitalWrite(pin, LOW);
+    }
+
     Wire.begin();
     Wire.setClock(400000); // Set I2C clock speed to 400kHz
     Wire.setWireTimeout(3000, true); // Set I2C timeout to 3 ms (value is in us) and reset the bus on timeout
@@ -200,7 +208,7 @@ void setup() {
     #endif
 
     receiver.init();
-    esc.begin(motorPins); // Timer1 keeps sending min-throttle pulses from here on
+    esc.begin(motorPins); // Timer1 keeps sending stop pulses from here on; ESC arming tones mean calibration is done
     delay(2000);
     mixer.stopAllMotors();
     previousLoopTime = micros();

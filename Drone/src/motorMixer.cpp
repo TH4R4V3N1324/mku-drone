@@ -26,7 +26,7 @@ void MotorMixer::mixMotors(float throttle, float roll, float pitch, float yaw) {
  * @return None
  */
 void MotorMixer::stopAllMotors() {
-    esc.writeAll(ESC_MIN_PULSE_US);
+    esc.writeAll(ESC_STOP_PULSE_US);
 }
 
 /**
