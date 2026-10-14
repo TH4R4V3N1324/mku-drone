@@ -70,6 +70,11 @@ public:
         firstRun = true;
     }
 
+    /**
+     * @brief Clear only the integral, keeping the derivative history (call every loop to hold I at zero)
+     */
+    void resetIntegral() { integral = 0.0f; }
+
     void setKp(float newKp) { kp = newKp; }
     void setKi(float newKi) { ki = newKi; }
     void setKd(float newKd) { kd = newKd; }

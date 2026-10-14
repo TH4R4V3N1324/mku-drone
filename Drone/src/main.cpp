@@ -23,6 +23,7 @@ constexpr float MAX_THROTTLE = 0.85f; // 1850 us, leaving correction headroom
 
 void run();
 void disarm();
+bool preArmChecksPass(bool hoverSwitch);
 void test();
 [[noreturn]] void haltWithImuError();
 #if CALIBRATE_ESCS
@@ -59,7 +60,7 @@ static bool flowAvailable = false;
 constexpr float ROLL_CORRECTION_LIMIT  = 0.3f;   // PID output range (+/-)
 constexpr float PITCH_CORRECTION_LIMIT = 0.3f;   // PID output range (+/-)
 constexpr float YAW_CORRECTION_LIMIT   = 0.2f;   // PID output range (+/-)
-constexpr float MAX_TILT_ANGLE         = 30.0f;  // deg, full stick roll/pitch
+constexpr float MAX_TILT_ANGLE         = 15.0f;  // deg, full stick roll/pitch
 constexpr float MAX_TILT_RATE          = 200.0f; // deg/s, outer angle loop output limit
 constexpr float MAX_YAW_RATE           = 180.0f; // deg/s, full stick yaw
 constexpr float RATE_D_FILTER_HZ       = 30.0f;  // low-pass on the rate loops' D term only
@@ -78,7 +79,7 @@ constexpr float THROTTLE_HANDOFF_RATE  = 1.5f;   // max manual throttle handoff 
 constexpr float HOVER_MIN_TILT_COS     = 0.7f;   // limits tilt compensation to ~45 degrees
 constexpr float ENTRY_MAX_VZ           = 0.3f;   // m/s, must be below this to engage
 constexpr float ENTRY_HOLD_S           = 0.5f;   // seconds the conditions must hold
-constexpr float ENTRY_MIN_THROTTLE     = 0.2f;   // can't engage hover on the ground
+constexpr float ENTRY_MIN_THROTTLE     = 0.5f;   // can't engage hover on the ground (lift-off is ~50-60%)
 constexpr float CLIMB_DEADBAND         = 0.1f;   // m/s
 constexpr float THROTTLE_FILTER_TAU    = 0.3f;   // s, smoothing of stick throttle for capture
 constexpr float ACCEL_FILTER_HZ        = 20.0f;  // low-pass on vertical accel
@@ -106,7 +107,6 @@ constexpr float   FLOW_FORWARD_SIGN        = 1.0f;     // flip to -1 if forward 
 constexpr uint8_t FLOW_READ_DIVIDER        = 5;        // read every 5th loop (50 Hz); the sensor makes ~120 frames/s
 constexpr float   FLOW_FILTER_HZ           = 5.0f;     // low-pass on the drift velocity
 constexpr float   DRIFT_CORRECTION_LIMIT   = 8.0f;     // deg, max tilt the drift hold may add
-constexpr float   DRIFT_MIN_THROTTLE       = 0.2f;     // filtered stick throttle above which we count as airborne
 
 static float   flowVelRight     = 0.0f; // rad/s, filtered, rotation removed
 static float   flowVelForward   = 0.0f;
@@ -121,9 +121,11 @@ static float   rollDriftCorrection  = 0.0f; // deg, added to the roll angle setp
 static float   pitchDriftCorrection = 0.0f;
 
 constexpr float   ARM_THROTTLE      = 0.08f; // stick above this arms (once unblocked)
-constexpr float   IDLE_THROTTLE     = 0.03f; // stick at/below this disarms and unblocks arming
+constexpr float   IDLE_THROTTLE     = 0.03f; // stick at/below this disarms (in any mode) and unblocks arming
+constexpr float   ARM_MAX_TILT_DEG  = 10.0f; // won't arm if roll or pitch is beyond this (upside down, on its side)
+constexpr float   AIRBORNE_THROTTLE = 0.5f;  // filtered stick throttle above which we count as airborne (I-terms and drift hold run)
 constexpr uint8_t IMU_FAIL_LIMIT    = 25;    // consecutive failed IMU reads (100 ms at 250 Hz) before disarming
-constexpr float   CRASH_ANGLE_DEG   = 45.0f; // roll or pitch beyond this means crashed or stuck (max commanded tilt is 30)
+constexpr float   CRASH_ANGLE_DEG   = 30.0f; // roll or pitch beyond this means crashed or stuck
 constexpr float   CRASH_TIME_S      = 0.1f;  // how long the tilt must last before cutting the motors
 
 static bool    throttleIdle = true;  // motors stopped (disarmed)
@@ -140,8 +142,8 @@ PID rollRatePID(0.0045, 0.0008, 0.00002, -ROLL_CORRECTION_LIMIT, ROLL_CORRECTION
 PID pitchRatePID(0.0045, 0.0008, 0.00002, -PITCH_CORRECTION_LIMIT, PITCH_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // inner loop: pitch rate
 PID yawPID(0.004, 0.002, 0.0, -YAW_CORRECTION_LIMIT, YAW_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // yaw rate
 // Drift hold: flow velocity (rad/s) -> angle setpoint offset (deg). Untuned starting point.
-PID driftRollPID(6.0, 0.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
-PID driftPitchPID(6.0, 0.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
+PID driftRollPID(6.0, 1.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
+PID driftPitchPID(6.0, 1.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
 SerialTuner tuner(rollAnglePID, rollRatePID, pitchAnglePID, pitchRatePID, yawPID, altitudePID,
                   driftRollPID, driftPitchPID);
 
@@ -304,6 +306,12 @@ void run() {
   float hoverMeasured = vz;
   float hoverCorrection = 0.0f;
   if (hoverActive) {
+    // The stick still cuts the motors in hover (a lost throttle channel also reads 0 and lands here)
+    if (stickThrottle <= IDLE_THROTTLE) {
+      disarm();
+      return;
+    }
+
     float climbRate = receiver.getAux2() * 2.0f - 1.0f;  // +/-1 m/s
     if (fabsf(climbRate) < CLIMB_DEADBAND) climbRate = 0.0f;
 
@@ -329,6 +337,10 @@ void run() {
         armBlocked = true;
       } else if (stickThrottle <= IDLE_THROTTLE) {
         armBlocked = false;
+      }
+
+      if (!armBlocked && stickThrottle > ARM_THROTTLE && !preArmChecksPass(hoverSwitch)) {
+        armBlocked = true; // throttle must go back to idle, so the drone can't arm the moment the fault clears
       }
 
       if (!armBlocked && stickThrottle > ARM_THROTTLE) {
@@ -367,7 +379,7 @@ void run() {
   // axis whose stick is centred so the pilot can still move it
   float flowSampleDt = 0.0f;
   const bool newFlowSample = flowAvailable && updateFlowVelocity(dt, flowSampleDt);
-  const bool airborne = hoverActive || throttleFilt > DRIFT_MIN_THROTTLE;
+  const bool airborne = hoverActive || throttleFilt > AIRBORNE_THROTTLE;
   const bool driftHold = airborne && flowValid;
   if (driftHold && receiver.getRoll() == 0.0f) {
     if (newFlowSample) rollDriftCorrection = driftRollPID.compute(0.0f, flowVelRight, flowSampleDt);
@@ -394,6 +406,15 @@ void run() {
   float rollOutput = rollRatePID.compute(rollRateSetpoint, imu.getGyroY(), dt);
   float pitchOutput = pitchRatePID.compute(pitchRateSetpoint, imu.getGyroX(), dt);
   float yawOutput = yawPID.compute(yawRateSetpoint, imu.getGyroZ(), dt);
+
+  // On the ground the frame can't rotate, so any error would wind the I-terms up and flip it on takeoff
+  if (!airborne) {
+    rollAnglePID.resetIntegral();
+    pitchAnglePID.resetIntegral();
+    rollRatePID.resetIntegral();
+    pitchRatePID.resetIntegral();
+    yawPID.resetIntegral();
+  }
 
   if (TUNE_PID && millis() - lastTelemetryTime >= 50) {
     lastTelemetryTime = millis();
@@ -458,6 +479,27 @@ void disarm() {
   throttleIdle    = true;
   armBlocked      = true;
   mixer.stopAllMotors();
+}
+
+/**
+ * @brief Check the drone is safe to arm, printing the reason if not
+ * @param[in] hoverSwitch Whether the hover switch (AUX1) is on
+ * @return True if level, the IMU's last read succeeded and the hover switch is off
+ */
+bool preArmChecksPass(bool hoverSwitch) {
+  if (imuFailCount != 0) {
+    Serial.println(F("Arming refused: IMU not responding."));
+    return false;
+  }
+  if (fabsf(imu.getRoll()) > ARM_MAX_TILT_DEG || fabsf(imu.getPitch()) > ARM_MAX_TILT_DEG) {
+    Serial.println(F("Arming refused: not level."));
+    return false;
+  }
+  if (hoverSwitch) {
+    Serial.println(F("Arming refused: hover switch is on."));
+    return false;
+  }
+  return true;
 }
 
 /**

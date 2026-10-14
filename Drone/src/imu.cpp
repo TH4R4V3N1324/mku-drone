@@ -1,4 +1,5 @@
 #include "imu.h"
+#include <string.h>
 
 /**
  * @brief Initialize the IMU
@@ -189,12 +190,26 @@ bool IMU::readRaw(RawSample& raw) {
 /**
  * @brief Read data from the IMU
  * @details Reads accelerometer, gyroscope, and temperature data from the IMU and updates the internal state.
- * On an I2C failure the previous data and orientation are left unchanged.
- * @return True if a fresh sample was read, false on I2C failure
+ * On an I2C failure or frozen data the previous data and orientation are left unchanged.
+ * @return True if a fresh sample was read, false on I2C failure or frozen data
  */
 bool IMU::readData() {
     RawSample raw;
     if (!readRaw(raw)) {
+        return false;
+    }
+
+    // After a brownout the MPU-6050 wakes in sleep mode and keeps answering I2C with frozen data.
+    // Sensor noise means live samples never repeat exactly, so a run of identical ones is a failure.
+    if (memcmp(&raw, &lastRaw, sizeof(raw)) == 0) {
+        if (staleCount < STALE_SAMPLE_LIMIT) {
+            ++staleCount;
+        }
+    } else {
+        staleCount = 0;
+    }
+    lastRaw = raw;
+    if (staleCount >= STALE_SAMPLE_LIMIT) {
         return false;
     }
 

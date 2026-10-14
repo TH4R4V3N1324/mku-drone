@@ -31,6 +31,8 @@ public:
         data{},
         lastReadTime(0),
         i2cAddress(IMU_ADDRESS),
+        lastRaw{},
+        staleCount(0),
         pitch(0.0f),
         roll(0.0f),
         yaw(0.0f),
@@ -124,6 +126,9 @@ private:
     static constexpr float ANGLE_FILTER_TAU = 1.0f; // s, complementary filter time constant (higher = trust gyro longer)
     static constexpr float STILL_GYRO_RANGE_DPS = 2.0f; // gyro spread above this during sampling means the drone moved
     static constexpr uint16_t GYRO_CAL_SAMPLES = 1000;
+    static constexpr uint8_t STALE_SAMPLE_LIMIT = 10; // identical samples in a row before the data counts as frozen
+    RawSample lastRaw;
+    uint8_t staleCount;
     float pitch;
     float roll;
     float yaw;
