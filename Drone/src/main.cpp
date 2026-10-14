@@ -60,7 +60,7 @@ static bool flowAvailable = false;
 constexpr float ROLL_CORRECTION_LIMIT  = 0.3f;   // PID output range (+/-)
 constexpr float PITCH_CORRECTION_LIMIT = 0.3f;   // PID output range (+/-)
 constexpr float YAW_CORRECTION_LIMIT   = 0.2f;   // PID output range (+/-)
-constexpr float MAX_TILT_ANGLE         = 15.0f;  // deg, full stick roll/pitch
+constexpr float MAX_TILT_ANGLE         = 30.0f;  // deg, full stick roll/pitch
 constexpr float MAX_TILT_RATE          = 200.0f; // deg/s, outer angle loop output limit
 constexpr float MAX_YAW_RATE           = 180.0f; // deg/s, full stick yaw
 constexpr float RATE_D_FILTER_HZ       = 30.0f;  // low-pass on the rate loops' D term only
@@ -125,7 +125,7 @@ constexpr float   IDLE_THROTTLE     = 0.03f; // stick at/below this disarms (in 
 constexpr float   ARM_MAX_TILT_DEG  = 10.0f; // won't arm if roll or pitch is beyond this (upside down, on its side)
 constexpr float   AIRBORNE_THROTTLE = 0.5f;  // filtered stick throttle above which we count as airborne (I-terms and drift hold run)
 constexpr uint8_t IMU_FAIL_LIMIT    = 25;    // consecutive failed IMU reads (100 ms at 250 Hz) before disarming
-constexpr float   CRASH_ANGLE_DEG   = 30.0f; // roll or pitch beyond this means crashed or stuck
+constexpr float   CRASH_ANGLE_DEG   = 45.0f; // roll or pitch beyond this means crashed or stuck (max commanded tilt is 30)
 constexpr float   CRASH_TIME_S      = 0.1f;  // how long the tilt must last before cutting the motors
 
 static bool    throttleIdle = true;  // motors stopped (disarmed)
