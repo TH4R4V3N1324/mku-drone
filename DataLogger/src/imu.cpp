@@ -1,4 +1,5 @@
 #include "imu.h"
+#include <string.h>
 
 /**
  * @brief Initialize the IMU
@@ -16,135 +17,242 @@ void IMU::init(int address) {
 
     Wire.beginTransmission(i2cAddress);
     Wire.write(0x1A); // Configuration register
-    Wire.write(0x00); // Disable DLPF for the highest bandwidth
+    Wire.write(0x02); // Set DLPF to 2 (gyro 98Hz, ~2.8ms delay; below the 125Hz Nyquist of the 250Hz loop)
     Wire.endTransmission(true);
 
     Wire.beginTransmission(i2cAddress);
     Wire.write(0x19); // Sample rate divider register
-    Wire.write(0x00); // 1 kHz internal sample rate
+    Wire.write(0x00); // Set sample rate to 1kHz
     Wire.endTransmission(true);
 
-    lastReadTime = millis();
+    Wire.beginTransmission(i2cAddress);
+    Wire.write(0x1B); // Gyroscope configuration register
+    Wire.write(0x10); // Set full scale range to +/- 1000 degrees/sec
+    Wire.endTransmission(true);
+
+    Wire.beginTransmission(i2cAddress);
+    Wire.write(0x1C); // Accelerometer configuration register
+    Wire.write(0x10); // Set full scale range to +/- 8g (headroom so motor vibration doesn't clip)
+    Wire.endTransmission(true);
+
+    lastReadTime = micros();
 }
 
 /**
- * @brief Calibrate the IMU
- * @details Calibrates the gyroscope by averaging stationary angular-rate samples
- * @return None
+ * @brief Average raw samples while checking that the drone stays still
+ * @param[in] numSamples Number of samples to average (about 1.5 ms each)
+ * @param[out] result Mean raw gyro rates, accelerometer angles and Z acceleration, plus the gyro spread
+ * @return True on success, false if an I2C read failed
  */
-void IMU::calibrate() {
-    const int numSamples = 2000;
-    float sumGyroX = 0.0f;
-    float sumGyroY = 0.0f;
-    float sumGyroZ = 0.0f;
-    float sumAccelPitch = 0.0f;
-    float sumAccelRoll = 0.0f;
-    float sumAccelZ = 0.0f;
+bool IMU::sampleStill(uint16_t numSamples, StillSample& result) {
+    float sumGyroX = 0.0f, sumGyroY = 0.0f, sumGyroZ = 0.0f;
+    float sumAccelPitch = 0.0f, sumAccelRoll = 0.0f, sumAccelZ = 0.0f;
+    float minGyro[3] = {1e6f, 1e6f, 1e6f};
+    float maxGyro[3] = {-1e6f, -1e6f, -1e6f};
 
-    for (int i = 0; i < numSamples; ++i) {
-        Wire.beginTransmission(i2cAddress);
-        Wire.write(0x3B);
-        if (Wire.endTransmission(false) != 0 || Wire.requestFrom(i2cAddress, 14, true) != 14) {
-            return;
+    for (uint16_t i = 0; i < numSamples; ++i) {
+        RawSample raw;
+        if (!readRaw(raw)) {
+            return false;
         }
 
-        int16_t ax = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
-        int16_t ay = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
-        int16_t az = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
-        Wire.read();
-        Wire.read();
-        int16_t gx = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
-        int16_t gy = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
-        int16_t gz = static_cast<int16_t>(Wire.read() << 8 | Wire.read());
+        const float gyro[3] = {raw.gx / GYRO_SCALE, raw.gy / GYRO_SCALE, raw.gz / GYRO_SCALE};
+        for (uint8_t axis = 0; axis < 3; ++axis) {
+            minGyro[axis] = fminf(minGyro[axis], gyro[axis]);
+            maxGyro[axis] = fmaxf(maxGyro[axis], gyro[axis]);
+        }
+        sumGyroX += gyro[0];
+        sumGyroY += gyro[1];
+        sumGyroZ += gyro[2];
 
-        float accelX = ax / ACCEL_SCALE;
-        float accelY = ay / ACCEL_SCALE;
-        float accelZ = (az / ACCEL_SCALE) * GRAVITY;
-        sumAccelPitch += atan2(accelY, accelZ) * 180.0f / PI;
-        sumAccelRoll += atan2(-accelX, sqrt(accelY * accelY + accelZ * accelZ)) * 180.0f / PI;
-        sumAccelZ += accelZ;
-        sumGyroX += gx / GYRO_SCALE;
-        sumGyroY += gy / GYRO_SCALE;
-        sumGyroZ += gz / GYRO_SCALE;
-        delay(5);
+        float accelPitch, accelRoll;
+        accelAngles(raw.ax / ACCEL_SCALE, raw.ay / ACCEL_SCALE, raw.az / ACCEL_SCALE, accelPitch, accelRoll);
+        sumAccelPitch += accelPitch;
+        sumAccelRoll += accelRoll;
+        sumAccelZ += (raw.az / ACCEL_SCALE) * GRAVITY;
+        delay(1);
     }
 
-    gyroOffsetX = sumGyroX / numSamples;
-    gyroOffsetY = sumGyroY / numSamples;
-    gyroOffsetZ = sumGyroZ / numSamples;
-    accelPitchOffset = sumAccelPitch / numSamples;
-    accelRollOffset = sumAccelRoll / numSamples;
-    accelZOffset = (sumAccelZ / numSamples) - GRAVITY;
-    pitch = 0.0f;
-    roll = 0.0f;
+    result.gyroX = sumGyroX / numSamples;
+    result.gyroY = sumGyroY / numSamples;
+    result.gyroZ = sumGyroZ / numSamples;
+    result.gyroRange = fmaxf(maxGyro[0] - minGyro[0], fmaxf(maxGyro[1] - minGyro[1], maxGyro[2] - minGyro[2]));
+    result.accelPitch = sumAccelPitch / numSamples;
+    result.accelRoll = sumAccelRoll / numSamples;
+    result.accelZ = sumAccelZ / numSamples;
+    return true;
+}
+
+/**
+ * @brief Measure the gyro bias, repeating until the drone is held still
+ * @details Run at every boot: gyro bias drifts with temperature. Tilt doesn't matter,
+ * so this works on uneven ground.
+ * @return True on success, false if an I2C read failed
+ */
+bool IMU::calibrateGyro() {
+    StillSample sample;
+    while (true) {
+        if (!sampleStill(GYRO_CAL_SAMPLES, sample)) {
+            return false;
+        }
+        if (sample.gyroRange <= STILL_GYRO_RANGE_DPS) {
+            break;
+        }
+        Serial.println(F("Movement detected during gyro calibration, retrying - keep the drone still."));
+    }
+
+    gyroOffsetX = sample.gyroX;
+    gyroOffsetY = sample.gyroY;
+    gyroOffsetZ = sample.gyroZ;
+    return true;
+}
+
+/**
+ * @brief Measure the accelerometer offsets that define level
+ * @details The frame must be level and still. Does not apply the result; see setLevelCalibration().
+ * @param[out] level The measured level offsets
+ * @param[in] numSamples Number of samples to average (about 1.5 ms each)
+ * @param[out] moved True if the drone moved during the measurement (result should be discarded)
+ * @return True on success, false if an I2C read failed
+ */
+bool IMU::measureLevel(LevelCalibration& level, uint16_t numSamples, bool& moved) {
+    StillSample sample;
+    if (!sampleStill(numSamples, sample)) {
+        return false;
+    }
+    moved = sample.gyroRange > STILL_GYRO_RANGE_DPS;
+    level.pitchOffset = sample.accelPitch;
+    level.rollOffset = sample.accelRoll;
+    level.accelZOffset = sample.accelZ - GRAVITY;
+    return true;
+}
+
+/**
+ * @brief Apply level offsets (from EEPROM or measureLevel())
+ * @param[in] level The level offsets to use
+ * @return None
+ */
+void IMU::setLevelCalibration(const LevelCalibration& level) {
+    accelPitchOffset = level.pitchOffset;
+    accelRollOffset = level.rollOffset;
+    accelZOffset = level.accelZOffset;
+}
+
+/**
+ * @brief Start the angle estimate from the current accelerometer reading
+ * @details Call after calibration so the complementary filter doesn't start at 0
+ * when the drone is sitting on a slope. Yaw is reset to 0.
+ * @return True on success, false if an I2C read failed
+ */
+bool IMU::resetOrientation() {
+    RawSample raw;
+    if (!readRaw(raw)) {
+        return false;
+    }
+    float accelPitch, accelRoll;
+    accelAngles(raw.ax / ACCEL_SCALE, raw.ay / ACCEL_SCALE, raw.az / ACCEL_SCALE, accelPitch, accelRoll);
+    pitch = accelPitch - accelPitchOffset;
+    roll = accelRoll - accelRollOffset;
     yaw = 0.0f;
     lastReadTime = micros();
-    lastFilterTime = 0;
-    filterInitialized = false;
+    return true;
+}
+
+/**
+ * @brief Read one raw accelerometer/temperature/gyro sample (registers 0x3B-0x48)
+ * @param[out] raw The raw sensor counts
+ * @return True on success, false on I2C failure
+ */
+bool IMU::readRaw(RawSample& raw) {
+    Wire.beginTransmission(i2cAddress);
+    Wire.write(0x3B); // Starting register for accelerometer data
+    if (Wire.endTransmission(false) != 0 || Wire.requestFrom(i2cAddress, 14, true) != 14) {
+        return false;
+    }
+
+    // Read high byte then low byte in separate statements: the order of two
+    // Wire.read() calls inside one expression is unspecified in C++
+    auto readWord = []() -> int16_t {
+        const uint8_t high = Wire.read();
+        const uint8_t low = Wire.read();
+        return static_cast<int16_t>((high << 8) | low);
+    };
+    raw.ax = readWord();
+    raw.ay = readWord();
+    raw.az = readWord();
+    raw.temp = readWord();
+    raw.gx = readWord();
+    raw.gy = readWord();
+    raw.gz = readWord();
+    return true;
 }
 
 /**
  * @brief Read data from the IMU
- * @details Reads accelerometer, gyroscope, and temperature data from the IMU and updates the internal state
- * @return None
+ * @details Reads accelerometer, gyroscope, and temperature data from the IMU and updates the internal state.
+ * On an I2C failure or frozen data the previous data and orientation are left unchanged.
+ * @return True if a fresh sample was read, false on I2C failure or frozen data
  */
-void IMU::readData() {
-    // Implementation for reading IMU data
-    Wire.beginTransmission(i2cAddress);
-    Wire.write(0x3B); // Starting register for accelerometer data
-    Wire.endTransmission(false);
-    Wire.requestFrom(i2cAddress, 14, true); // Request 14 bytes of data
-
-    int16_t ax = Wire.read() << 8 | Wire.read();
-    int16_t ay = Wire.read() << 8 | Wire.read();
-    int16_t az = Wire.read() << 8 | Wire.read();
-    int16_t temp = Wire.read() << 8 | Wire.read();
-    int16_t gx = Wire.read() << 8 | Wire.read();
-    int16_t gy = Wire.read() << 8 | Wire.read();
-    int16_t gz = Wire.read() << 8 | Wire.read();
-
-    data.accelX = (ax / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
-    data.accelY = (ay / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
-    data.accelZ = (az / ACCEL_SCALE) * GRAVITY - accelZOffset; // Convert to m/s^2 and remove stationary bias
-    data.temperature = (temp / TEMP_SCALE) + TEMP_OFFSET; // Convert to degrees Celsius
-    
-    float rawGyroX = (gx / GYRO_SCALE) - gyroOffsetX;
-    float rawGyroY = (gy / GYRO_SCALE) - gyroOffsetY;
-    float rawGyroZ = (gz / GYRO_SCALE) - gyroOffsetZ;
-
-    unsigned long now = micros();
-    float filterDt = lastFilterTime == 0
-        ? 0.0f
-        : (now - lastFilterTime) / 1000000.0f;
-    lastFilterTime = now;
-
-    if (!filterInitialized || filterDt <= 0.0f) {
-        filteredGyroX = rawGyroX;
-        filteredGyroY = rawGyroY;
-        filteredGyroZ = rawGyroZ;
-        filterInitialized = true;
-    } else {
-        const float timeConstant = 1.0f / (2.0f * PI * GYRO_FILTER_CUTOFF_HZ);
-        const float filterAlpha = filterDt / (timeConstant + filterDt);
-        filteredGyroX += filterAlpha * (rawGyroX - filteredGyroX);
-        filteredGyroY += filterAlpha * (rawGyroY - filteredGyroY);
-        filteredGyroZ += filterAlpha * (rawGyroZ - filteredGyroZ);
+bool IMU::readData() {
+    RawSample raw;
+    if (!readRaw(raw)) {
+        return false;
     }
 
-    data.gyroX = filteredGyroX;
-    data.gyroY = filteredGyroY;
-    data.gyroZ = filteredGyroZ;
+    // After a brownout the MPU-6050 wakes in sleep mode and keeps answering I2C with frozen data.
+    // Sensor noise means live samples never repeat exactly, so a run of identical ones is a failure.
+    if (memcmp(&raw, &lastRaw, sizeof(raw)) == 0) {
+        if (staleCount < STALE_SAMPLE_LIMIT) {
+            ++staleCount;
+        }
+    } else {
+        staleCount = 0;
+    }
+    lastRaw = raw;
+    if (staleCount >= STALE_SAMPLE_LIMIT) {
+        return false;
+    }
 
-    calculateOrientation();
+    data.accelX = (raw.ax / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
+    data.accelY = (raw.ay / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
+    data.accelZ = (raw.az / ACCEL_SCALE) * GRAVITY - accelZOffset; // Convert to m/s^2 and remove stationary bias
+    data.temperature = (raw.temp / TEMP_SCALE) + TEMP_OFFSET; // Convert to degrees Celsius
+
+    data.gyroX = (raw.gx / GYRO_SCALE) - gyroOffsetX;
+    data.gyroY = (raw.gy / GYRO_SCALE) - gyroOffsetY;
+    data.gyroZ = (raw.gz / GYRO_SCALE) - gyroOffsetZ;
+
+    // Same raw-g computation as calibrate(), so the offsets cancel exactly
+    float accelPitch, accelRoll;
+    accelAngles(raw.ax / ACCEL_SCALE, raw.ay / ACCEL_SCALE, raw.az / ACCEL_SCALE, accelPitch, accelRoll);
+    calculateOrientation(accelPitch - accelPitchOffset, accelRoll - accelRollOffset);
+    return true;
+}
+
+/**
+ * @brief Compute tilt angles from a gravity vector
+ * @param[in] ax X acceleration (any unit, all three axes the same)
+ * @param[in] ay Y acceleration
+ * @param[in] az Z acceleration
+ * @param[out] pitchDeg Pitch angle in degrees (rotation about X)
+ * @param[out] rollDeg Roll angle in degrees (rotation about Y)
+ * @return None
+ */
+void IMU::accelAngles(float ax, float ay, float az, float& pitchDeg, float& rollDeg) {
+    pitchDeg = atan2(ay, az) * RAD_TO_DEG;
+    rollDeg = atan2(-ax, sqrt(ay * ay + az * az)) * RAD_TO_DEG;
 }
 
 /**
  * @brief Calculate the orientation (pitch, roll, yaw) of the IMU
- * @details Uses a complementary filter to combine accelerometer and gyroscope data to calculate pitch, roll, and yaw
+ * @details Complementary filter: integrates the gyro and pulls slowly towards the
+ * accelerometer angle with time constant ANGLE_FILTER_TAU. Accelerometer vibration
+ * is attenuated by the same time constant, so it needs no separate filter.
+ * @param[in] accelPitch Offset-corrected accelerometer pitch in degrees
+ * @param[in] accelRoll Offset-corrected accelerometer roll in degrees
  * @return None
  */
-void IMU::calculateOrientation() {
-    // Calculate pitch and roll using complementary filter
+void IMU::calculateOrientation(float accelPitch, float accelRoll) {
     unsigned long now = micros();
     float dt = (now - lastReadTime) / 1000000.0f;
     lastReadTime = now;
@@ -153,13 +261,12 @@ void IMU::calculateOrientation() {
         dt = 0.01f;
     }
 
-    float accelPitch = atan2(data.accelY, data.accelZ) * 180.0f / PI - accelPitchOffset;
-    float accelRoll = atan2(-data.accelX, sqrt(data.accelY * data.accelY + data.accelZ * data.accelZ)) * 180.0f / PI - accelRollOffset;
+    const float alpha = ANGLE_FILTER_TAU / (ANGLE_FILTER_TAU + dt);
     float gyroPitch = pitch + data.gyroX * dt;
     float gyroRoll = roll + data.gyroY * dt;
 
-    pitch = ALPHA * gyroPitch + (1 - ALPHA) * accelPitch;
-    roll = ALPHA * gyroRoll + (1 - ALPHA) * accelRoll;
+    pitch = alpha * gyroPitch + (1.0f - alpha) * accelPitch;
+    roll = alpha * gyroRoll + (1.0f - alpha) * accelRoll;
     yaw += data.gyroZ * dt; // Integrate yaw from gyroscope
 }
 /**
