@@ -51,6 +51,7 @@ public:
      * @return The name of the active axis ("roll", "rollrate", "pitch", "pitchrate", "yaw", "hover", "driftroll" or "driftpitch")
      */
     const char* getActiveAxisName() const { return activeName; }
+    const PID& getActivePid() const { return *active; }
 
     /**
      * @brief Call this once per loop() to process any incoming serial commands
