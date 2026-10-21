@@ -118,7 +118,7 @@ void Receiver::readData() {
     throttle = applyDeadband(throttle);
     roll = applyDeadband(roll);
     pitch = -applyDeadband(pitch);
-    yaw = applyDeadband(yaw);
+    yaw = -applyDeadband(yaw);
 }
 
 /**
