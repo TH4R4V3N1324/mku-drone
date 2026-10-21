@@ -142,9 +142,11 @@ void EscOutput::writeAll(uint16_t pulseUs) {
  * @brief Block until the next ESC output cycle starts
  * @details Paces the control loop at ESC_UPDATE_RATE_HZ. Returns immediately if
  * a cycle already started since the last call (i.e. the loop overran).
- * @return None
+ * @return True if the loop overran (a cycle had already started on entry)
  */
-void EscOutput::waitForNextCycle() {
+bool EscOutput::waitForNextCycle() {
+    const bool overran = cycleCount != lastCycle;
     while (cycleCount == lastCycle) {}
     lastCycle = cycleCount;
+    return overran;
 }

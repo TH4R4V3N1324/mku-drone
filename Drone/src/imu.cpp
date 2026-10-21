@@ -17,7 +17,7 @@ void IMU::init(int address) {
 
     Wire.beginTransmission(i2cAddress);
     Wire.write(0x1A); // Configuration register
-    Wire.write(0x02); // Set DLPF to 2 (gyro 98Hz, ~2.8ms delay; below the 125Hz Nyquist of the 250Hz loop)
+    Wire.write(0x02); // Set DLPF to 2 (gyro 98Hz, ~2.8ms delay; below the 200Hz Nyquist of the 400Hz loop)
     Wire.endTransmission(true);
 
     Wire.beginTransmission(i2cAddress);
@@ -56,7 +56,7 @@ bool IMU::sampleStill(uint16_t numSamples, StillSample& result) {
             return false;
         }
 
-        const float gyro[3] = {raw.gx / GYRO_SCALE, raw.gy / GYRO_SCALE, raw.gz / GYRO_SCALE};
+        const float gyro[3] = {raw.gx * GYRO_DPS_PER_COUNT, raw.gy * GYRO_DPS_PER_COUNT, raw.gz * GYRO_DPS_PER_COUNT};
         for (uint8_t axis = 0; axis < 3; ++axis) {
             minGyro[axis] = fminf(minGyro[axis], gyro[axis]);
             maxGyro[axis] = fmaxf(maxGyro[axis], gyro[axis]);
@@ -66,10 +66,10 @@ bool IMU::sampleStill(uint16_t numSamples, StillSample& result) {
         sumGyroZ += gyro[2];
 
         float accelPitch, accelRoll;
-        accelAngles(raw.ax / ACCEL_SCALE, raw.ay / ACCEL_SCALE, raw.az / ACCEL_SCALE, accelPitch, accelRoll);
+        accelAngles(raw.ax, raw.ay, raw.az, accelPitch, accelRoll);
         sumAccelPitch += accelPitch;
         sumAccelRoll += accelRoll;
-        sumAccelZ += (raw.az / ACCEL_SCALE) * GRAVITY;
+        sumAccelZ += raw.az * ACCEL_MS2_PER_COUNT;
         delay(1);
     }
 
@@ -150,10 +150,14 @@ bool IMU::resetOrientation() {
         return false;
     }
     float accelPitch, accelRoll;
-    accelAngles(raw.ax / ACCEL_SCALE, raw.ay / ACCEL_SCALE, raw.az / ACCEL_SCALE, accelPitch, accelRoll);
+    accelAngles(raw.ax, raw.ay, raw.az, accelPitch, accelRoll);
     pitch = accelPitch - accelPitchOffset;
     roll = accelRoll - accelRollOffset;
     yaw = 0.0f;
+    accelSumX = 0;
+    accelSumY = 0;
+    accelSumZ = 0;
+    accelElapsed = 0.0f;
     lastReadTime = micros();
     return true;
 }
@@ -191,9 +195,11 @@ bool IMU::readRaw(RawSample& raw) {
  * @brief Read data from the IMU
  * @details Reads accelerometer, gyroscope, and temperature data from the IMU and updates the internal state.
  * On an I2C failure or frozen data the previous data and orientation are left unchanged.
+ * @param[in] correctWithAccel Also pull the angles towards the accelerometer (the trig is slow on the
+ * AVR, so the flight loop only does this every few samples; the gyro is integrated every call)
  * @return True if a fresh sample was read, false on I2C failure or frozen data
  */
-bool IMU::readData() {
+bool IMU::readData(bool correctWithAccel) {
     RawSample raw;
     if (!readRaw(raw)) {
         return false;
@@ -213,19 +219,19 @@ bool IMU::readData() {
         return false;
     }
 
-    data.accelX = (raw.ax / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
-    data.accelY = (raw.ay / ACCEL_SCALE) * GRAVITY; // Convert to m/s^2
-    data.accelZ = (raw.az / ACCEL_SCALE) * GRAVITY - accelZOffset; // Convert to m/s^2 and remove stationary bias
-    data.temperature = (raw.temp / TEMP_SCALE) + TEMP_OFFSET; // Convert to degrees Celsius
+    data.accelX = raw.ax * ACCEL_MS2_PER_COUNT; // Convert to m/s^2
+    data.accelY = raw.ay * ACCEL_MS2_PER_COUNT; // Convert to m/s^2
+    data.accelZ = raw.az * ACCEL_MS2_PER_COUNT - accelZOffset; // Convert to m/s^2 and remove stationary bias
+    data.temperature = raw.temp * TEMP_C_PER_COUNT + TEMP_OFFSET; // Convert to degrees Celsius
 
-    data.gyroX = (raw.gx / GYRO_SCALE) - gyroOffsetX;
-    data.gyroY = (raw.gy / GYRO_SCALE) - gyroOffsetY;
-    data.gyroZ = (raw.gz / GYRO_SCALE) - gyroOffsetZ;
+    data.gyroX = raw.gx * GYRO_DPS_PER_COUNT - gyroOffsetX;
+    data.gyroY = raw.gy * GYRO_DPS_PER_COUNT - gyroOffsetY;
+    data.gyroZ = raw.gz * GYRO_DPS_PER_COUNT - gyroOffsetZ;
 
-    // Same raw-g computation as calibrate(), so the offsets cancel exactly
-    float accelPitch, accelRoll;
-    accelAngles(raw.ax / ACCEL_SCALE, raw.ay / ACCEL_SCALE, raw.az / ACCEL_SCALE, accelPitch, accelRoll);
-    calculateOrientation(accelPitch - accelPitchOffset, accelRoll - accelRollOffset);
+    accelSumX += raw.ax;
+    accelSumY += raw.ay;
+    accelSumZ += raw.az;
+    calculateOrientation(correctWithAccel);
     return true;
 }
 
@@ -248,26 +254,39 @@ void IMU::accelAngles(float ax, float ay, float az, float& pitchDeg, float& roll
  * @details Complementary filter: integrates the gyro and pulls slowly towards the
  * accelerometer angle with time constant ANGLE_FILTER_TAU. Accelerometer vibration
  * is attenuated by the same time constant, so it needs no separate filter.
- * @param[in] accelPitch Offset-corrected accelerometer pitch in degrees
- * @param[in] accelRoll Offset-corrected accelerometer roll in degrees
+ * The accel correction can be applied every few samples: it uses the summed samples
+ * since the last one (so vibration near the correction rate can't alias into a tilt)
+ * and a weight for the whole elapsed time, which matches correcting every sample.
+ * @param[in] correctWithAccel Apply the accel correction this call
  * @return None
  */
-void IMU::calculateOrientation(float accelPitch, float accelRoll) {
+void IMU::calculateOrientation(bool correctWithAccel) {
     unsigned long now = micros();
-    float dt = (now - lastReadTime) / 1000000.0f;
+    float dt = (now - lastReadTime) * 1e-6f;
     lastReadTime = now;
 
     if (dt <= 0.0f || dt > 0.1f) {
         dt = 0.01f;
     }
 
-    const float alpha = ANGLE_FILTER_TAU / (ANGLE_FILTER_TAU + dt);
-    float gyroPitch = pitch + data.gyroX * dt;
-    float gyroRoll = roll + data.gyroY * dt;
-
-    pitch = alpha * gyroPitch + (1.0f - alpha) * accelPitch;
-    roll = alpha * gyroRoll + (1.0f - alpha) * accelRoll;
+    pitch += data.gyroX * dt;
+    roll += data.gyroY * dt;
     yaw += data.gyroZ * dt; // Integrate yaw from gyroscope
+    accelElapsed += dt;
+    if (!correctWithAccel) {
+        return;
+    }
+
+    // Raw counts, as in sampleStill(), so the offsets cancel exactly (atan2 doesn't care about scale)
+    float accelPitch, accelRoll;
+    accelAngles(accelSumX, accelSumY, accelSumZ, accelPitch, accelRoll);
+    const float alpha = ANGLE_FILTER_TAU / (ANGLE_FILTER_TAU + accelElapsed);
+    pitch = alpha * pitch + (1.0f - alpha) * (accelPitch - accelPitchOffset);
+    roll = alpha * roll + (1.0f - alpha) * (accelRoll - accelRollOffset);
+    accelSumX = 0;
+    accelSumY = 0;
+    accelSumZ = 0;
+    accelElapsed = 0.0f;
 }
 /**
  * @brief Print the raw data from the IMU

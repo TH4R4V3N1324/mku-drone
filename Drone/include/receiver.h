@@ -27,6 +27,7 @@ public:
     * @return True if the transmitter link is live
      */
     bool hasSignal() const { return signalValid; }
+    uint32_t takeInterruptCount();
 
 private:
     static constexpr uint8_t CHANNEL_COUNT = 6;
@@ -47,6 +48,7 @@ private:
     volatile unsigned long pulseStarts[CHANNEL_COUNT];
     volatile unsigned long lastPulseTimes[CHANNEL_COUNT];
     volatile uint8_t lastPortStates[PORT_COUNT];
+    volatile uint32_t interruptCount; // pin-change interrupts since the last takeInterruptCount()
 };
 
 #endif // RECEIVER_H
