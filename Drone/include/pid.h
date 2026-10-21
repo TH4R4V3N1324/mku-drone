@@ -39,13 +39,6 @@ public:
         // Float division is slow on the AVR (~30 us), so the clamp limits and filter constant
         // are precomputed and the derivative path uses at most one division.
 
-        //Integral with anti-windup clamp
-        if (ki > 0.0f) {
-            integral = constrain(integral + error * dt, integralMin, integralMax);
-        } else {
-            integral = 0.0f;
-        }
-
         //Derivative on measurement (avoids setpoint-change kick), optionally low-passed; skipped when kd is 0
         float derivative = 0.0f;
         if (!firstRun && kd != 0.0f) {
@@ -61,7 +54,24 @@ public:
         prevMeasured = measured;
         firstRun = false;
 
-        float output = kp * error + ki * integral + kd * derivative;
+        const float pdTerm = kp * error + kd * derivative;
+
+        //Integral with anti-windup: clamped, and frozen while the output is already saturated in the
+        //direction the error pushes, so it can't build up during a long saturated input and then keep
+        //driving after the input ends. It still unwinds normally when the error reverses.
+        if (ki > 0.0f) {
+            const float candidate = constrain(integral + error * dt, integralMin, integralMax);
+            const float unclamped = pdTerm + ki * candidate;
+            const bool pushingPastMax = unclamped > outputMax && error > 0.0f;
+            const bool pushingPastMin = unclamped < outputMin && error < 0.0f;
+            if (!pushingPastMax && !pushingPastMin) {
+                integral = candidate;
+            }
+        } else {
+            integral = 0.0f;
+        }
+
+        float output = pdTerm + ki * integral;
         return constrain(output, outputMin, outputMax);
     }
 
@@ -86,6 +96,7 @@ public:
     float getKp() const { return kp; }
     float getKi() const { return ki; }
     float getKd() const { return kd; }
+    float getIntegralTerm() const { return ki * integral; } // the I contribution to the output
 
 private:
     /**

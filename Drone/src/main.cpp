@@ -74,7 +74,7 @@ static bool flowAvailable = false;
 
 constexpr float ROLL_CORRECTION_LIMIT  = 0.3f;   // PID output range (+/-)
 constexpr float PITCH_CORRECTION_LIMIT = 0.3f;   // PID output range (+/-)
-constexpr float YAW_CORRECTION_LIMIT   = 0.2f;   // PID output range (+/-)
+constexpr float YAW_CORRECTION_LIMIT   = 0.3f;   // PID output range (+/-); yaw torque is weak, so it needs as much as roll/pitch
 constexpr float MAX_TILT_ANGLE         = 30.0f;  // deg, full stick roll/pitch
 constexpr float MAX_TILT_RATE          = 200.0f; // deg/s, outer angle loop output limit
 constexpr float MAX_YAW_RATE           = 180.0f; // deg/s, full stick yaw
@@ -94,7 +94,7 @@ constexpr float THROTTLE_HANDOFF_RATE  = 1.5f;   // max manual throttle handoff 
 constexpr float HOVER_MIN_TILT_COS     = 0.7f;   // limits tilt compensation to ~45 degrees
 constexpr float ENTRY_MAX_VZ           = 0.3f;   // m/s, must be below this to engage
 constexpr float ENTRY_HOLD_S           = 0.5f;   // seconds the conditions must hold
-constexpr float ENTRY_MIN_THROTTLE     = 0.5f;   // can't engage hover on the ground (lift-off is ~50-60%)
+constexpr float ENTRY_MIN_THROTTLE     = 0.2f;   // can't engage hover on the ground (lift-off is ~50-60%)
 constexpr float CLIMB_DEADBAND         = 0.1f;   // m/s
 constexpr float THROTTLE_FILTER_TAU    = 0.3f;   // s, smoothing of stick throttle for capture
 constexpr float ACCEL_FILTER_HZ        = 20.0f;  // low-pass on vertical accel
@@ -146,7 +146,7 @@ constexpr uint8_t PHASE_RX_B        = 4;
 constexpr uint8_t PHASE_ACCEL_B     = 5;
 static uint8_t loopPhase = 0;
 
-constexpr float   AIRBORNE_THROTTLE = 0.5f;  // filtered stick throttle above which we count as airborne (I-terms and drift hold run)
+constexpr float   AIRBORNE_THROTTLE = 0.2f;  // filtered stick throttle above which we count as airborne (I-terms and drift hold run)
 constexpr uint8_t IMU_FAIL_LIMIT    = ESC_UPDATE_RATE_HZ / 10; // consecutive failed IMU reads (100 ms) before disarming
 constexpr float   CRASH_ANGLE_DEG   = 45.0f; // roll or pitch beyond this means crashed or stuck (max commanded tilt is 30)
 constexpr float   CRASH_TIME_S      = 0.1f;  // how long the tilt must last before cutting the motors
@@ -163,7 +163,7 @@ PID rollAnglePID(3.0 , 0.0, 0.0, -MAX_TILT_RATE, MAX_TILT_RATE); // outer loop: 
 PID pitchAnglePID(3.0, 0.0, 0.0, -MAX_TILT_RATE, MAX_TILT_RATE); // outer loop: pitch angle -> pitch rate setpoint
 PID rollRatePID(0.0045, 0.0008, 0.00002, -ROLL_CORRECTION_LIMIT, ROLL_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // inner loop: roll rate
 PID pitchRatePID(0.0045, 0.0008, 0.00002, -PITCH_CORRECTION_LIMIT, PITCH_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // inner loop: pitch rate
-PID yawPID(0.004, 0.002, 0.0, -YAW_CORRECTION_LIMIT, YAW_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // yaw rate
+PID yawPID(0.008, 0.002, 0.0, -YAW_CORRECTION_LIMIT, YAW_CORRECTION_LIMIT, RATE_D_FILTER_HZ);
 // Drift hold: flow velocity (rad/s) -> angle setpoint offset (deg). Untuned starting point.
 PID driftRollPID(6.0, 1.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
 PID driftPitchPID(6.0, 1.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
@@ -508,6 +508,7 @@ void run() {
     Serial.print(">Setpoint:"); Serial.println(setpointToPrint);
     Serial.print(">Actual:"); Serial.println(measuredToPrint);
     Serial.print(">Output:"); Serial.println(outputToPrint);
+    Serial.print(">ITerm:"); Serial.println(tuner.getActivePid().getIntegralTerm(), 3);
   }
 
   mixer.mixMotors(throttle, rollOutput, pitchOutput, yawOutput);
