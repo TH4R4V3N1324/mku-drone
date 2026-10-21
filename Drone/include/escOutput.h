@@ -8,7 +8,9 @@ constexpr uint16_t ESC_MIN_PULSE_US = 1000;
 constexpr uint16_t ESC_MAX_PULSE_US = 2000;
 constexpr uint16_t ESC_STOP_PULSE_US = 950; // motors off: below the calibrated minimum so ISR jitter (which only lengthens pulses) can't spin them
 
-// ESC update / control loop rate. Standard PWM ESCs accept up to ~400-490 Hz.
+// ESC update / control loop rate. Standard PWM ESCs accept up to ~400-490 Hz, but the armed
+// loop takes ~2.7 ms (worst ~3.3 ms) on the Uno, so 333 Hz overruns; check with MEASURE_LOOP
+// in main.cpp before raising it.
 constexpr uint16_t ESC_UPDATE_RATE_HZ = 250;
 
 /**
@@ -28,7 +30,7 @@ public:
     void begin(const uint8_t (&pins)[ESC_COUNT]);
     void write(const uint16_t (&pulseUs)[ESC_COUNT]);
     void writeAll(uint16_t pulseUs);
-    void waitForNextCycle();
+    bool waitForNextCycle();
 private:
     uint8_t portMasks[ESC_COUNT];
     uint8_t lastCycle;

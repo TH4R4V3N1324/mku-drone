@@ -16,8 +16,11 @@ public:
      */
     PID(float kp, float ki, float kd, float outputMin, float outputMax, float dFilterHz = 0.0f) :
         kp(kp), ki(ki), kd(kd),
-        outputMin(outputMin), outputMax(outputMax), dFilterHz(dFilterHz),
-        prevMeasured(0), integral(0), filteredDerivative(0), firstRun(true) {}
+        outputMin(outputMin), outputMax(outputMax),
+        dFilterTau(dFilterHz > 0.0f ? 1.0f / (2.0f * PI * dFilterHz) : 0.0f),
+        prevMeasured(0), integral(0), filteredDerivative(0), firstRun(true) {
+        updateIntegralLimits();
+    }
 
     /**
      * @brief Compute the PID output
@@ -33,24 +36,26 @@ public:
 
         float error = setpoint - measured;
 
+        // Float division is slow on the AVR (~30 us), so the clamp limits and filter constant
+        // are precomputed and the derivative path uses at most one division.
+
         //Integral with anti-windup clamp
-        integral += error * dt;
         if (ki > 0.0f) {
-            integral = constrain(integral, outputMin / ki, outputMax / ki);
+            integral = constrain(integral + error * dt, integralMin, integralMax);
         } else {
             integral = 0.0f;
         }
 
-        //Derivative on measurement (avoids setpoint-change kick), optionally low-passed
+        //Derivative on measurement (avoids setpoint-change kick), optionally low-passed; skipped when kd is 0
         float derivative = 0.0f;
-        if (!firstRun) {
-            float rawDerivative = -(measured - prevMeasured) / dt;
-            if (dFilterHz > 0.0f) {
-                const float tau = 1.0f / (2.0f * PI * dFilterHz);
-                filteredDerivative += (dt / (tau + dt)) * (rawDerivative - filteredDerivative);
+        if (!firstRun && kd != 0.0f) {
+            const float delta = measured - prevMeasured;
+            if (dFilterTau > 0.0f) {
+                // Same as filtered += dt/(tau+dt) * (-delta/dt - filtered), with one division instead of two
+                filteredDerivative += (-delta - dt * filteredDerivative) / (dFilterTau + dt);
                 derivative = filteredDerivative;
             } else {
-                derivative = rawDerivative;
+                derivative = -delta / dt;
             }
         }
         prevMeasured = measured;
@@ -76,16 +81,25 @@ public:
     void resetIntegral() { integral = 0.0f; }
 
     void setKp(float newKp) { kp = newKp; }
-    void setKi(float newKi) { ki = newKi; }
-    void setKd(float newKd) { kd = newKd; }
+    void setKi(float newKi) { ki = newKi; updateIntegralLimits(); }
+    void setKd(float newKd) { kd = newKd; filteredDerivative = 0.0f; } // the filter isn't updated while kd is 0
     float getKp() const { return kp; }
     float getKi() const { return ki; }
     float getKd() const { return kd; }
 
 private:
+    /**
+     * @brief Recompute the integral clamp so ki * integral stays within the output range
+     */
+    void updateIntegralLimits() {
+        integralMin = ki > 0.0f ? outputMin / ki : 0.0f;
+        integralMax = ki > 0.0f ? outputMax / ki : 0.0f;
+    }
+
     float kp, ki, kd;
     float outputMin, outputMax;
-    float dFilterHz;
+    float integralMin, integralMax;
+    float dFilterTau; // s, derivative low-pass time constant (0 = unfiltered)
     float prevMeasured;
     float integral;
     float filteredDerivative;

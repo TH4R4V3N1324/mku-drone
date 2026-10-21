@@ -41,14 +41,18 @@ public:
         gyroOffsetZ(0.0f),
         accelPitchOffset(0.0f),
         accelRollOffset(0.0f),
-        accelZOffset(0.0f) {}
+        accelZOffset(0.0f),
+        accelSumX(0),
+        accelSumY(0),
+        accelSumZ(0),
+        accelElapsed(0.0f) {}
     void init(int address = IMU_ADDRESS);
     bool calibrateGyro();
     bool measureLevel(LevelCalibration& level, uint16_t numSamples, bool& moved);
     void setLevelCalibration(const LevelCalibration& level);
     LevelCalibration getLevelCalibration() const { return {accelPitchOffset, accelRollOffset, accelZOffset}; }
     bool resetOrientation();
-    bool readData();
+    bool readData(bool correctWithAccel = true);
     void printData();
     void printOrientation();
     /**
@@ -113,7 +117,7 @@ private:
     };
     bool readRaw(RawSample& raw);
     bool sampleStill(uint16_t numSamples, StillSample& result);
-    void calculateOrientation(float accelPitch, float accelRoll);
+    void calculateOrientation(bool correctWithAccel);
     static void accelAngles(float ax, float ay, float az, float& pitchDeg, float& rollDeg);
     IMUData data;
     unsigned long lastReadTime;
@@ -123,6 +127,10 @@ private:
     static constexpr float TEMP_SCALE = 340.0f; // Scale factor for temperature
     static constexpr float TEMP_OFFSET = 36.53f; // Offset for temperature
     static constexpr float GRAVITY = 9.80665f; // Gravity constant for m/s^2 conversion
+    // Per-count conversions, so each sample multiplies instead of divides (float division is slow on the AVR)
+    static constexpr float ACCEL_MS2_PER_COUNT = GRAVITY / ACCEL_SCALE;
+    static constexpr float GYRO_DPS_PER_COUNT = 1.0f / GYRO_SCALE;
+    static constexpr float TEMP_C_PER_COUNT = 1.0f / TEMP_SCALE;
     static constexpr float ANGLE_FILTER_TAU = 1.0f; // s, complementary filter time constant (higher = trust gyro longer)
     static constexpr float STILL_GYRO_RANGE_DPS = 2.0f; // gyro spread above this during sampling means the drone moved
     static constexpr uint16_t GYRO_CAL_SAMPLES = 1000;
@@ -138,6 +146,8 @@ private:
     float accelPitchOffset;
     float accelRollOffset;
     float accelZOffset;
+    int32_t accelSumX, accelSumY, accelSumZ; // raw accelerometer counts since the last accel correction
+    float accelElapsed;                      // s since the last accel correction
 };
 
 #endif // IMU_H

@@ -9,6 +9,9 @@ constexpr uint16_t MIN_VALID_PULSE_US = 900;
 constexpr uint16_t MAX_VALID_PULSE_US = 2100;
 constexpr float STICK_DEADBAND = 0.05f;
 constexpr float STICK_MIN_OUTPUT = 0.01f; // output magnitude just outside the deadband
+// Reciprocals so the per-loop scaling multiplies instead of divides (float division is slow on the AVR)
+constexpr float DEADBAND_RESCALE = 1.0f / (1.0f - STICK_DEADBAND);
+constexpr float PULSE_RANGE_INV = 1.0f / 1000.0f;
 
 /**
  * @brief Zero small stick values and rescale the rest so output starts at +/-STICK_MIN_OUTPUT and reaches +/-1
@@ -19,7 +22,7 @@ float applyDeadband(float value) {
         return 0.0f;
     }
 
-    const float scaled = (magnitude - STICK_DEADBAND) / (1.0f - STICK_DEADBAND);
+    const float scaled = (magnitude - STICK_DEADBAND) * DEADBAND_RESCALE;
     return copysignf(STICK_MIN_OUTPUT + (1.0f - STICK_MIN_OUTPUT) * scaled, value);
 }
 }
@@ -49,7 +52,8 @@ Receiver::Receiver(uint8_t throttlePin, uint8_t rollPin, uint8_t pitchPin, uint8
     pulseWidths{0, 0, 0, 0, 0, 0},
     pulseStarts{0, 0, 0, 0, 0, 0},
     lastPulseTimes{0, 0, 0, 0, 0, 0},
-    lastPortStates{0, 0, 0} {}
+    lastPortStates{0, 0, 0},
+    interruptCount(0) {}
 
 /**
  * @brief Initialize the receiver
@@ -129,6 +133,7 @@ void Receiver::readData() {
 void Receiver::handlePinChangeInterrupt(uint8_t port, uint8_t portState) {
     const uint8_t changedBits = portState ^ lastPortStates[port];
     const unsigned long currentTime = micros();
+    ++interruptCount;
 
     for (uint8_t channel = 0; channel < CHANNEL_COUNT; ++channel) {
         const uint8_t channelMask = channelMasks[channel];
@@ -156,9 +161,23 @@ void Receiver::handlePinChangeInterrupt(uint8_t port, uint8_t portState) {
  * @return The normalized value of the channel
  */
 float Receiver::readChannel(uint16_t pulseWidth, float minimum, float maximum) const {
-    float value = (pulseWidth - 1000.0f) / 1000.0f;
+    float value = (pulseWidth - 1000.0f) * PULSE_RANGE_INV;
     value = constrain(value, 0.0f, 1.0f);
     return minimum + value * (maximum - minimum);
+}
+
+/**
+ * @brief Read and clear the pin-change interrupt count
+ * @details A clean six-channel receiver gives about 600 per second; far more means
+ * noise is toggling the receiver pins.
+ * @return Interrupts since the previous call
+ */
+uint32_t Receiver::takeInterruptCount() {
+    noInterrupts();
+    const uint32_t count = interruptCount;
+    interruptCount = 0;
+    interrupts();
+    return count;
 }
 
 ISR(PCINT0_vect) {

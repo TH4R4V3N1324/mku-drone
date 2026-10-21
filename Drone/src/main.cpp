@@ -14,6 +14,7 @@
 #define CALIBRATE_ESCS 0  // Set to 1 to calibrate ESCs on startup (ensure props are removed)
 #define CALIBRATE_IMU 0   // Set to 1 to run the guided IMU level calibration and save it to EEPROM
 #define CHECK_FLOW 0      // Set to 1 to plot optical flow against the gyro to set its orientation and scale
+#define MEASURE_LOOP 0    // Set to 1 to print the control loop's average/max time and overruns once a second
 
 #if (CALIBRATE_ESCS + CALIBRATE_IMU + CHECK_FLOW) > 1
 #error "Enable only one of CALIBRATE_ESCS, CALIBRATE_IMU and CHECK_FLOW"
@@ -32,10 +33,24 @@ void calibrateEscs();
 #if CALIBRATE_IMU
 void calibrateImuLevel();
 #endif
+#if MEASURE_LOOP
+void reportLoopTime(unsigned long busyUs, bool overran);
+// Time spent in each part of run(), summed over the current report window
+enum LoopSection : uint8_t { SEC_RX, SEC_IMU, SEC_THROTTLE, SEC_FLOW, SEC_PID, SEC_OUTPUT, SECTION_COUNT };
+static unsigned long sectionUs[SECTION_COUNT];
+static unsigned long sectionMark;
+static uint16_t imuReadFails = 0;
+#define PROFILE_START() (sectionMark = micros())
+#define PROFILE(section) do { const unsigned long t = micros(); sectionUs[section] += t - sectionMark; sectionMark = t; } while (0)
+#else
+#define PROFILE_START()
+#define PROFILE(section)
+#endif
 #if CHECK_FLOW
 void checkOpticalFlow();
 #endif
-bool updateFlowVelocity(float dt, float& sampleDt);
+bool updateFlowVelocity(float dt, bool readSensor, float& sampleDt);
+float cosApprox(float x);
 
 // ESC signal pins: front left, front right, rear right, rear left (must be on PORTD)
 constexpr uint8_t motorPins[ESC_COUNT] = {4, 5, 6, 7};
@@ -104,7 +119,6 @@ constexpr float   FLOW_RAD_PER_COUNT       = 1.9e-3f; // flow angle per sensor c
 constexpr bool    FLOW_SWAP_XY             = true;    // true if the sensor's Y axis points right
 constexpr float   FLOW_RIGHT_SIGN          = -1.0f;     // flip to -1 if right-hand flow comes out mirrored
 constexpr float   FLOW_FORWARD_SIGN        = 1.0f;     // flip to -1 if forward flow comes out mirrored
-constexpr uint8_t FLOW_READ_DIVIDER        = 5;        // read every 5th loop (50 Hz); the sensor makes ~120 frames/s
 constexpr float   FLOW_FILTER_HZ           = 5.0f;     // low-pass on the drift velocity
 constexpr float   DRIFT_CORRECTION_LIMIT   = 8.0f;     // deg, max tilt the drift hold may add
 
@@ -113,7 +127,6 @@ static float   flowVelForward   = 0.0f;
 static float   flowRateRight    = 0.0f; // rad/s, last raw flow including rotation (for CHECK_FLOW)
 static float   flowRateForward  = 0.0f;
 static bool    flowValid        = false;
-static uint8_t flowLoopCount    = 0;
 static float   flowTiltRight    = 0.0f; // rad of roll since the last flow read
 static float   flowTiltForward  = 0.0f;
 static float   flowElapsed      = 0.0f; // s since the last flow read
@@ -123,8 +136,18 @@ static float   pitchDriftCorrection = 0.0f;
 constexpr float   ARM_THROTTLE      = 0.08f; // stick above this arms (once unblocked)
 constexpr float   IDLE_THROTTLE     = 0.03f; // stick at/below this disarms (in any mode) and unblocks arming
 constexpr float   ARM_MAX_TILT_DEG  = 10.0f; // won't arm if roll or pitch is beyond this (upside down, on its side)
+// Work that doesn't need every loop is spread over a fixed cycle, one job per loop, so no loop
+// carries two (float maths is slow on the AVR). At 333 Hz: flow ~56 Hz, receiver and accel ~111 Hz.
+constexpr uint8_t SCHEDULE_PERIOD   = 6;
+constexpr uint8_t PHASE_FLOW        = 0;     // optical flow read (the sensor makes ~120 frames/s)
+constexpr uint8_t PHASE_RX_A        = 1;     // receiver decode (its frames only arrive at 50 Hz)
+constexpr uint8_t PHASE_ACCEL_A     = 2;     // accelerometer correction of the angle estimate
+constexpr uint8_t PHASE_RX_B        = 4;
+constexpr uint8_t PHASE_ACCEL_B     = 5;
+static uint8_t loopPhase = 0;
+
 constexpr float   AIRBORNE_THROTTLE = 0.5f;  // filtered stick throttle above which we count as airborne (I-terms and drift hold run)
-constexpr uint8_t IMU_FAIL_LIMIT    = 25;    // consecutive failed IMU reads (100 ms at 250 Hz) before disarming
+constexpr uint8_t IMU_FAIL_LIMIT    = ESC_UPDATE_RATE_HZ / 10; // consecutive failed IMU reads (100 ms) before disarming
 constexpr float   CRASH_ANGLE_DEG   = 45.0f; // roll or pitch beyond this means crashed or stuck (max commanded tilt is 30)
 constexpr float   CRASH_TIME_S      = 0.1f;  // how long the tilt must last before cutting the motors
 
@@ -218,9 +241,17 @@ void setup() {
 }
 
 void loop() {
-  esc.waitForNextCycle(); // fixed ESC_UPDATE_RATE_HZ control loop
+  const bool overran = esc.waitForNextCycle(); // fixed ESC_UPDATE_RATE_HZ control loop
+  #if MEASURE_LOOP
+    const unsigned long loopStart = micros();
+  #else
+    (void)overran;
+  #endif
   if (TUNE_PID) {tuner.update();}
   run();
+  #if MEASURE_LOOP
+    reportLoopTime(micros() - loopStart, overran);
+  #endif
   //test();
 }
 
@@ -231,14 +262,26 @@ void loop() {
  */
 void run() {
   unsigned long now = micros();
-  float dt = (now - previousLoopTime) / 1000000.0f;
+  float dt = (now - previousLoopTime) * 1e-6f;
   previousLoopTime = now;
   if (dt <= 0.0f || dt > 0.1f) dt = 1.0f / ESC_UPDATE_RATE_HZ;
+  PROFILE_START();
 
-  receiver.readData();
+  const uint8_t phase = loopPhase;
+  loopPhase = (loopPhase + 1 < SCHEDULE_PERIOD) ? loopPhase + 1 : 0;
+
+  if (phase == PHASE_RX_A || phase == PHASE_RX_B) {
+    receiver.readData();
+  }
+  PROFILE(SEC_RX);
 
   // Keep flying on the last sample through brief I2C glitches, but disarm if the IMU stays unreachable
-  if (imu.readData()) {
+  const bool imuOk = imu.readData(phase == PHASE_ACCEL_A || phase == PHASE_ACCEL_B);
+  PROFILE(SEC_IMU);
+  #if MEASURE_LOOP
+    if (!imuOk) ++imuReadFails;
+  #endif
+  if (imuOk) {
     imuFailCount = 0;
   } else if (imuFailCount < IMU_FAIL_LIMIT) {
     ++imuFailCount;
@@ -267,14 +310,14 @@ void run() {
   // Vertical velocity estimate (runs every loop so it's valid on entry)
   float rollRad  = imu.getRoll()  * DEG_TO_RAD;
   float pitchRad = imu.getPitch() * DEG_TO_RAD;
-  float tiltCos  = cosf(rollRad) * cosf(pitchRad);
+  float tiltCos  = cosApprox(rollRad) * cosApprox(pitchRad);
 
   float azWorld = imu.getAccelZ() * tiltCos - GRAVITY;   // flip sign if your Z axis points down
   const float accelTau = 1.0f / (2.0f * PI * ACCEL_FILTER_HZ);
   azFilt += (dt / (accelTau + dt)) * (azWorld - azFilt);
 
   vz += azFilt * dt;
-  vz -= vz * dt / VZ_LEAK_TAU;                           // dt-independent leak
+  vz -= vz * dt * (1.0f / VZ_LEAK_TAU);                  // dt-independent leak
   if (!hoverActive && stickThrottle <= 0.05f) vz = 0.0f; // on the ground / idle
 
   // Hover entry / exit
@@ -374,11 +417,12 @@ void run() {
     }
     throttle = constrain(throttle, 0.0f, MAX_THROTTLE);
   }
+  PROFILE(SEC_THROTTLE);
 
   // Drift hold: once airborne (hover, or enough stick throttle to be off the ground), and only on an
   // axis whose stick is centred so the pilot can still move it
   float flowSampleDt = 0.0f;
-  const bool newFlowSample = flowAvailable && updateFlowVelocity(dt, flowSampleDt);
+  const bool newFlowSample = flowAvailable && updateFlowVelocity(dt, phase == PHASE_FLOW, flowSampleDt);
   const bool airborne = hoverActive || throttleFilt > AIRBORNE_THROTTLE;
   const bool driftHold = airborne && flowValid;
   if (driftHold && receiver.getRoll() == 0.0f) {
@@ -393,6 +437,7 @@ void run() {
     driftPitchPID.reset();
     pitchDriftCorrection = 0.0f;
   }
+  PROFILE(SEC_FLOW);
 
   float rollSetpoint = receiver.getRoll() * MAX_TILT_ANGLE + ROLL_TRIM_DEG + rollDriftCorrection;
   float pitchSetpoint = receiver.getPitch() * MAX_TILT_ANGLE + PITCH_TRIM_DEG + pitchDriftCorrection;
@@ -415,6 +460,7 @@ void run() {
     pitchRatePID.resetIntegral();
     yawPID.resetIntegral();
   }
+  PROFILE(SEC_PID);
 
   if (TUNE_PID && millis() - lastTelemetryTime >= 50) {
     lastTelemetryTime = millis();
@@ -465,6 +511,7 @@ void run() {
   }
 
   mixer.mixMotors(throttle, rollOutput, pitchOutput, yawOutput);
+  PROFILE(SEC_OUTPUT);
 }
 
 /**
@@ -480,6 +527,57 @@ void disarm() {
   armBlocked      = true;
   mixer.stopAllMotors();
 }
+
+#if MEASURE_LOOP
+/**
+ * @brief Accumulate control loop timing and print a summary once a second
+ * @details The budget is one ESC period; any loop longer than that delays the next
+ * motor update. The print itself happens outside the measured window. Also reports the
+ * IMU read time and failures, and the receiver pin-change interrupt rate (~600/s when clean).
+ * @param[in] busyUs  Time from the start of the ESC cycle to the end of run()
+ * @param[in] overran Whether the previous loop ran past its ESC cycle
+ * @return None
+ */
+void reportLoopTime(unsigned long busyUs, bool overran) {
+  static unsigned long sumUs = 0;
+  static unsigned long maxUs = 0;
+  static uint16_t samples = 0;
+  static uint16_t overruns = 0;
+  static unsigned long windowStart = micros();
+
+  sumUs += busyUs;
+  if (busyUs > maxUs) maxUs = busyUs;
+  if (overran) ++overruns;
+  if (++samples < ESC_UPDATE_RATE_HZ) return;
+
+  // The window stretches past 1 s when loops overrun, so scale the interrupt count to per second
+  const unsigned long now = micros();
+  const unsigned long windowMs = (now - windowStart) / 1000UL;
+  const unsigned long irqPerSec = receiver.takeInterruptCount() * 1000UL / (windowMs ? windowMs : 1);
+  windowStart = now;
+
+  Serial.print(F("Loop us avg ")); Serial.print(sumUs / samples);
+  Serial.print(F(" max ")); Serial.print(maxUs);
+  Serial.print(F(" / ")); Serial.print(1000000UL / ESC_UPDATE_RATE_HZ);
+  Serial.print(F(", overruns ")); Serial.print(overruns);
+  Serial.print(F(" | IMU fails ")); Serial.print(imuReadFails);
+  Serial.print(F(" | RX irq/s ")); Serial.println(irqPerSec);
+  // Average us per loop in each section; sections after an early return (disarmed) read 0
+  static const char sectionNames[SECTION_COUNT][9] = {"rx", "imu", "throttle", "flow", "pid", "output"};
+  Serial.print(F("  "));
+  for (uint8_t i = 0; i < SECTION_COUNT; ++i) {
+    Serial.print(sectionNames[i]); Serial.print(' ');
+    Serial.print(sectionUs[i] / samples); Serial.print(F("  "));
+    sectionUs[i] = 0;
+  }
+  Serial.println();
+  sumUs = 0;
+  maxUs = 0;
+  samples = 0;
+  overruns = 0;
+  imuReadFails = 0;
+}
+#endif
 
 /**
  * @brief Check the drone is safe to arm, printing the reason if not
@@ -503,22 +601,34 @@ bool preArmChecksPass(bool hoverSwitch) {
 }
 
 /**
+ * @brief Fast cosine for tilt compensation (cosf takes over 100 us on the AVR)
+ * @details 6th-order Taylor series: within 0.1% up to 75 deg and 0.001 absolute at 90 deg.
+ * Past 90 deg it diverges, but the crash cutoff disarms well before that.
+ * @param[in] x Angle in radians
+ * @return Approximate cos(x)
+ */
+float cosApprox(float x) {
+  const float x2 = x * x;
+  return 1.0f - x2 * (0.5f - x2 * (1.0f / 24.0f - x2 * (1.0f / 720.0f)));
+}
+
+/**
  * @brief Track rotation each loop and turn the latest flow reading into drift velocity
  * @details Rotating the drone makes the ground appear to move, so the gyro's tilt over the same
  * window is added back (rotation and drift show up with opposite signs). Sets flowVelRight/Forward
  * and flowValid; a low-quality frame leaves the old velocity in place and clears flowValid.
  * @param[in] dt Loop time step in seconds
+ * @param[in] readSensor Read the sensor this call (otherwise only the rotation is tracked)
  * @param[out] sampleDt Time covered by the new sample, when one was taken
  * @return True if the sensor was read this call
  */
-bool updateFlowVelocity(float dt, float& sampleDt) {
+bool updateFlowVelocity(float dt, bool readSensor, float& sampleDt) {
   flowTiltRight   += imu.getGyroY() * DEG_TO_RAD * dt; // roll rate (same axis the roll rate loop uses)
   flowTiltForward += imu.getGyroX() * DEG_TO_RAD * dt; // pitch rate
   flowElapsed     += dt;
-  if (++flowLoopCount < FLOW_READ_DIVIDER) {
+  if (!readSensor) {
     return false;
   }
-  flowLoopCount = 0;
   sampleDt = flowElapsed;
 
   const bool ok = opticalFlow.readData();
@@ -730,6 +840,7 @@ void checkOpticalFlow() {
 
   unsigned long previous = micros();
   unsigned long lastPrint = 0;
+  uint8_t phase = 0;
   while (true) {
     delay(4);
     const unsigned long now = micros();
@@ -738,7 +849,8 @@ void checkOpticalFlow() {
     imu.readData(); // on a failed read, keep the last sample
 
     float sampleDt;
-    if (!updateFlowVelocity(dt, sampleDt) || millis() - lastPrint < 50) {
+    phase = (phase + 1 < SCHEDULE_PERIOD) ? phase + 1 : 0;
+    if (!updateFlowVelocity(dt, phase == PHASE_FLOW, sampleDt) || millis() - lastPrint < 50) {
       continue;
     }
     lastPrint = millis();
