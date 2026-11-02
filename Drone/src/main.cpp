@@ -158,13 +158,13 @@ static float   crashTime    = 0.0f;  // s spent beyond CRASH_ANGLE_DEG while arm
 
 PID altitudePID(0.1, 0.0, 0.0, -HOVER_CORRECTION_LIMIT, HOVER_CORRECTION_LIMIT); // PID controller for altitude
 // Cascaded attitude control: angle error (deg) -> outer P -> rate setpoint (deg/s) -> inner PID on gyro -> motor correction.
-// Roll/pitch gains tuned on a single-axis test rig; yaw is not tuned yet.
+// Roll/pitch gains tuned on a single-axis test rig and validated in flight; yaw is not tuned yet.
 PID rollAnglePID(3.0 , 0.0, 0.0, -MAX_TILT_RATE, MAX_TILT_RATE); // outer loop: roll angle -> roll rate setpoint
 PID pitchAnglePID(3.0, 0.0, 0.0, -MAX_TILT_RATE, MAX_TILT_RATE); // outer loop: pitch angle -> pitch rate setpoint
 PID rollRatePID(0.0045, 0.0008, 0.00002, -ROLL_CORRECTION_LIMIT, ROLL_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // inner loop: roll rate
 PID pitchRatePID(0.0045, 0.0008, 0.00002, -PITCH_CORRECTION_LIMIT, PITCH_CORRECTION_LIMIT, RATE_D_FILTER_HZ); // inner loop: pitch rate
 PID yawPID(0.008, 0.002, 0.0, -YAW_CORRECTION_LIMIT, YAW_CORRECTION_LIMIT, RATE_D_FILTER_HZ);
-// Drift hold: flow velocity (rad/s) -> angle setpoint offset (deg). Untuned starting point.
+// Drift hold: flow velocity (rad/s) -> angle setpoint offset (deg). Validated in flight.
 PID driftRollPID(6.0, 1.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
 PID driftPitchPID(6.0, 1.0, 0.0, -DRIFT_CORRECTION_LIMIT, DRIFT_CORRECTION_LIMIT);
 SerialTuner tuner(rollAnglePID, rollRatePID, pitchAnglePID, pitchRatePID, yawPID, altitudePID,
