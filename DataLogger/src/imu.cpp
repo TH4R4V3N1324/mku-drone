@@ -17,7 +17,7 @@ void IMU::init(int address) {
 
     Wire.beginTransmission(i2cAddress);
     Wire.write(0x1A); // Configuration register
-    Wire.write(0x02); // Set DLPF to 2 (gyro 98Hz, ~2.8ms delay; below the 125Hz Nyquist of the 250Hz loop)
+    Wire.write(0x02); // Set DLPF to 2 (gyro 98Hz, ~2.8ms delay; below the 250Hz Nyquist of the 500Hz loop)
     Wire.endTransmission(true);
 
     Wire.beginTransmission(i2cAddress);
