@@ -42,15 +42,19 @@ The chip-select pin is fixed to D10. The SPI connections are:
 At startup, the firmware:
 
 1. Starts serial output at `115200` baud.
-2. Starts I2C at 400 kHz and initializes the MPU-6050 for its 1 kHz internal sample rate with the digital low-pass filter disabled.
-3. Calibrates the sensor using 2,000 stationary samples. Keep the board still during this step.
+2. Starts I2C at 400 kHz and initializes the MPU-6050 with a 1 kHz internal sample rate, the digital low-pass filter at 98 Hz (gyro), and ranges of ±8 g and ±1000 deg/s.
+3. Measures the gyro bias from 1,000 stationary samples, repeating the measurement if the board moves, then seeds pitch and roll from the accelerometer. Keep the board still during this step. If the IMU does not respond, the firmware prints an error and stops.
 4. Initializes the SD card on chip select D10 at a conservative 8 MHz SPI speed for reliable writes.
 5. Reads `logNum.txt`, increments its value, and writes the updated value back.
 6. Creates a new binary file named `FlightN.bin`, where `N` is the incremented flight number.
 
 If SD initialization or file creation fails, the firmware prints an error and stops in an infinite loop. Existing log files are not overwritten because the flight number is persisted in `logNum.txt`.
 
-The main loop reads the IMU, calculates orientation, and appends one fixed 40-byte binary record to a 128-byte RAM buffer. Each record contains a `uint32_t` microsecond timestamp followed by nine IEEE-754 `float32` values: pitch, roll, yaw, acceleration X/Y/Z, and gyro X/Y/Z. The buffer is written to the card as raw bytes when full and is flushed to the filesystem every five seconds. This avoids CSV conversion and substantially reduces the data size. Serial timing output is disabled in the hot loop because transmitting diagnostics at 115200 baud significantly reduces the maximum logging rate. Remove the SD card only after stopping or powering down the logger so the last buffered data is not lost.
+The main loop runs at a fixed `500 Hz`, paced by a Timer1 interrupt. Ticks missed while a loop is busy (for example, during an SD write) are dropped rather than run back to back. Each loop reads the IMU, updates the orientation estimate, and writes one fixed 40-byte binary record to the log file. Each record contains a `uint32_t` microsecond timestamp followed by nine IEEE-754 `float32` values: pitch, roll, yaw, acceleration X/Y/Z, and gyro X/Y/Z. SdFat holds the records in its 512-byte sector cache and writes each sector to the card as it fills. The file is flushed to the filesystem every five seconds. Writing raw binary avoids CSV formatting on the Nano and substantially reduces the data size.
+
+If an IMU read fails or returns frozen data (ten identical samples in a row), that record is skipped and the gap shows up in the timestamps. The first failure is reported over serial. If an SD write fails, the firmware prints an error and stops.
+
+Remove the SD card only after stopping or powering down the logger so the last buffered data is not lost.
 
 ## Binary format
 
@@ -96,7 +100,7 @@ records = np.fromfile("FlightN.bin", dtype=record_dtype)
 | Roll | degrees | Complementary-filter roll estimate |
 | Yaw | degrees | Gyroscope-integrated yaw estimate; it will drift |
 | Accel X/Y/Z | m/s^2 | Accelerometer readings |
-| Gyro X/Y/Z | degrees/s | Bias-calibrated and low-pass-filtered angular rates |
+| Gyro X/Y/Z | degrees/s | Bias-calibrated angular rates, filtered by the MPU-6050's 98 Hz low-pass filter |
 
 The MPU-6050 temperature is read by the IMU class but is not currently written to the binary record.
 
@@ -117,8 +121,8 @@ On a successful startup, the serial monitor reports the SD-card status and the n
 ## Project layout
 
 ```text
-include/imu.h       MPU-6050 interface and data accessors
+include/imu.h       MPU-6050 interface and data accessors (shared with the Drone's IMU driver)
 src/imu.cpp         Sensor initialization, calibration, filtering, and orientation
-src/main.cpp        SdFat setup, file naming, and buffered binary logging loop
+src/main.cpp        SdFat setup, file naming, 500 Hz timer, and binary logging loop
 platformio.ini      Nano, framework, monitor, and library configuration
 ```
